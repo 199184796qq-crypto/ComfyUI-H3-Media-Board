@@ -425,7 +425,7 @@ class H3VideoModeControl:
         # Passing the board through keeps one clean wire path: Media Board →
         # Mode Control → Media Board Outputs, alongside the Boolean control.
         # Selection follows the actual connected media, not merely the
-        # frontend appearance: three or more images, or any reference audio / 
+        # frontend appearance: three or more images, or any reference audio /
         # video, requires H3's multi-reference preparation path.
         manifest = _clean_manifest(media_board)
         needs_multi_reference = (
