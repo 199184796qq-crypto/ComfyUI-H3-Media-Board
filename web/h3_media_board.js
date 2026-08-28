@@ -118,6 +118,25 @@ function clipboardFiles(event) {
   return Array.from(event.clipboardData?.items || []).map((item) => item.getAsFile?.()).filter(Boolean);
 }
 
+function transferFiles(event) {
+  return Array.from(event.dataTransfer?.files || []);
+}
+
+function transferCanIncludeKind(event, kind) {
+  const files = transferFiles(event);
+  if (files.length) return files.some((file) => kindForFile(file) === kind);
+  return Array.from(event.dataTransfer?.items || []).some((item) => {
+    const type = String(item.type || "").toLowerCase();
+    return item.kind === "file" && (type.startsWith(`${kind}/`) || (kind === "audio" && type === "application/ogg"));
+  });
+}
+
+function hasMediaTransfer(event) {
+  const files = transferFiles(event);
+  if (files.length) return files.some(kindForFile);
+  return Array.from(event.dataTransfer?.types || []).includes("Files");
+}
+
 async function uploadFile(kind, file) {
   if (!file || kindForFile(file) !== kind) return null;
   const form = new FormData();
@@ -213,8 +232,12 @@ function makeCard(kind, index, asset, update) {
     const uploaded = await uploadFile(kind, file);
     if (uploaded) update(uploaded);
   };
+  // Exposed for the page-level capture handler: the Comfy canvas may receive
+  // Windows Explorer drops before this DOM widget gets a normal drop event.
+  card._h3MediaKind = kind;
+  card._h3ReceiveFiles = receiveFiles;
   let dragDepth = 0;
-  const acceptsDrop = (event) => Array.from(event.dataTransfer?.files || []).some((file) => kindForFile(file) === kind);
+  const acceptsDrop = (event) => transferCanIncludeKind(event, kind);
   card.ondragenter = (event) => {
     if (!acceptsDrop(event)) return;
     event.preventDefault(); dragDepth += 1; card.classList.add("drag-over");
@@ -226,7 +249,7 @@ function makeCard(kind, index, asset, update) {
   card.ondrop = async (event) => {
     dragDepth = 0; card.classList.remove("drag-over");
     if (!acceptsDrop(event)) return;
-    stop(event); await receiveFiles(event.dataTransfer.files);
+    stop(event); await receiveFiles(transferFiles(event));
   };
   card.onpaste = async (event) => {
     const files = clipboardFiles(event);
@@ -271,6 +294,7 @@ function makeH3SettingsPanel(widgets, node) {
       const value = type === "select" ? input.value : type === "checkbox" ? input.checked : Number(input.value);
       widget.value = value;
       widget.callback?.(value);
+      node._h3SaveBackup?.();
       node.graph?.setDirtyCanvas(true, true);
       panel.querySelector(".mb-output-summary").textContent = summaryText();
     };
@@ -301,22 +325,102 @@ function createBoard(node) {
   const manifestWidget = node.widgets?.find((widget) => widget.name === "media_manifest");
   const promptWidget = node.widgets?.find((widget) => widget.name === "prompt");
   const settingsWidgets = Object.fromEntries(["duration", "aspect_ratio", "megapixels", "multiple", "auto_calculate", "manual_frames"].map((name) => [name, node.widgets?.find((widget) => widget.name === name)]));
-  if (!manifestWidget || !promptWidget || Object.values(settingsWidgets).some((widget) => !widget)) return;
+  if (!manifestWidget || !promptWidget) return;
   // Widgets retain normal workflow serialization; their controls are rendered
   // inside the board so the media and H3 setup stay in one place.
-  for (const widget of [manifestWidget, promptWidget, ...Object.values(settingsWidgets)]) { widget.computeSize = () => [0, -4]; widget.draw = () => {}; }
+  const hideNativeWidget = (widget) => {
+    widget.hidden = true;
+    widget.options = widget.options || {};
+    widget.options.hidden = true;
+    if (widget._state) widget._state.hidden = true;
+    widget.serialize = true;
+    widget.serializeValue = () => widget.value;
+    if (widget.element) widget.element.style.display = "none";
+    widget.computeSize = () => [0, -4];
+    widget.draw = () => {};
+  };
+  for (const widget of [manifestWidget, promptWidget]) hideNativeWidget(widget);
+  // Hiding prompt first keeps an older workflow from drawing its native
+  // multiline field over the board while ComfyUI upgrades its widget schema.
+  if (Object.values(settingsWidgets).some((widget) => !widget)) return;
+  for (const widget of Object.values(settingsWidgets)) hideNativeWidget(widget);
+
+  const sessionKey = `h3-media-board-live:${node.id}`;
+  let sessionSaved = null;
+  try { sessionSaved = JSON.parse(sessionStorage.getItem(sessionKey) || "null"); } catch (_) { /* no browser-session backup */ }
+  const persisted = node.properties?.h3_media_board_saved || sessionSaved;
+  if (persisted && typeof persisted === "object") {
+    if (typeof persisted.media_manifest === "string") manifestWidget.value = persisted.media_manifest;
+    if (typeof persisted.prompt === "string") promptWidget.value = persisted.prompt;
+    for (const [name, widget] of Object.entries(settingsWidgets)) {
+      if (persisted.settings?.[name] !== undefined) widget.value = persisted.settings[name];
+    }
+  }
 
   const root = document.createElement("div"); root.className = "h3-media-board"; root.tabIndex = 0;
   const prompt = document.createElement("textarea"); prompt.placeholder = "提示词（可直接连接上游文本输入）"; prompt.value = promptWidget.value || "";
   root.onpointerdown = (event) => { if (event.target !== prompt) root.focus({ preventScroll: true }); };
-  const persist = (state) => { manifestWidget.value = JSON.stringify(state); node.graph?.setDirtyCanvas(true, true); };
+  const saveBackup = () => {
+    node.properties = node.properties || {};
+    const backup = {
+      media_manifest: manifestWidget.value || "{}",
+      prompt: promptWidget.value || "",
+      settings: Object.fromEntries(Object.entries(settingsWidgets).map(([name, widget]) => [name, widget.value])),
+    };
+    node.properties.h3_media_board_saved = backup;
+    try { sessionStorage.setItem(sessionKey, JSON.stringify(backup)); } catch (_) { /* storage can be unavailable */ }
+  };
+  node._h3SaveBackup = saveBackup;
+  const priorSerialize = node.onSerialize;
+  node.onSerialize = function (...args) {
+    saveBackup();
+    return priorSerialize?.apply(this, args);
+  };
+  const persist = (state) => { manifestWidget.value = JSON.stringify(state); saveBackup(); node.graph?.setDirtyCanvas(true, true); };
+  const cardsAtPointer = (event) => Array.from(root.querySelectorAll(".mb-card")).find((card) => {
+    const rect = card.getBoundingClientRect();
+    return event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
+  });
+  const pointerIsOverBoard = (event) => {
+    const rect = root.getBoundingClientRect();
+    return event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
+  };
+  const clearDropHighlight = () => root.querySelectorAll(".mb-card.drag-over").forEach((card) => card.classList.remove("drag-over"));
+  // ComfyUI's canvas can capture a Windows Explorer drop before it reaches a
+  // DOM widget. Capturing at document level makes operating-system file drops
+  // dependable while still limiting them strictly to this board's screen area.
+  const captureDragOver = (event) => {
+    if (!hasMediaTransfer(event)) return;
+    if (!pointerIsOverBoard(event)) { clearDropHighlight(); return; }
+    event.preventDefault();
+    const card = cardsAtPointer(event);
+    clearDropHighlight();
+    if (card && transferCanIncludeKind(event, card._h3MediaKind)) card.classList.add("drag-over");
+  };
+  const captureDrop = async (event) => {
+    if (!hasMediaTransfer(event) || !pointerIsOverBoard(event)) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    const card = cardsAtPointer(event);
+    clearDropHighlight();
+    const files = transferFiles(event);
+    if (card && transferCanIncludeKind(event, card._h3MediaKind)) await card._h3ReceiveFiles?.(files);
+    else await root._h3AppendFiles?.(files);
+  };
+  document.addEventListener("dragover", captureDragOver, true);
+  document.addEventListener("drop", captureDrop, true);
+  const priorRemoved = node.onRemoved;
+  node.onRemoved = function (...args) {
+    document.removeEventListener("dragover", captureDragOver, true);
+    document.removeEventListener("drop", captureDrop, true);
+    priorRemoved?.apply(this, args);
+  };
   const render = () => {
     const state = readManifest(manifestWidget); root.replaceChildren();
     for (const kind of ["image", "audio", "video"]) {
       const title = document.createElement("div"); title.className = "mb-title"; title.textContent = `${LABELS[kind]} · ${LIMITS[kind]}`; root.appendChild(title);
       const row = document.createElement("div");
       // Images are deliberately a 3 × 3 grid. Audio and video stay as three fixed cards in one row.
-        row.className = kind === "image" ? "mb-image-grid" : "mb-row";
+      row.className = kind === "image" ? "mb-image-grid" : "mb-row";
       for (let index = 0; index < LIMITS[kind]; index++) {
         row.appendChild(makeCard(kind, index, state[kind][index], (uploaded) => {
           compactMedia(state, kind);
@@ -347,12 +451,13 @@ function createBoard(node) {
       }
       if (changed) { persist(state); render(); }
     };
+    root._h3AppendFiles = appendFiles;
     root.ondragover = (event) => {
-      if (Array.from(event.dataTransfer?.files || []).some((file) => kindForFile(file))) event.preventDefault();
+      if (hasMediaTransfer(event)) event.preventDefault();
     };
     root.ondrop = async (event) => {
-      if (!Array.from(event.dataTransfer?.files || []).some((file) => kindForFile(file))) return;
-      stop(event); await appendFiles(event.dataTransfer.files);
+      if (!hasMediaTransfer(event)) return;
+      stop(event); await appendFiles(transferFiles(event));
     };
     root.onpaste = async (event) => {
       const files = clipboardFiles(event);
@@ -362,7 +467,7 @@ function createBoard(node) {
     root.appendChild(makeH3SettingsPanel(settingsWidgets, node));
     root.appendChild(prompt);
   };
-  prompt.oninput = () => { promptWidget.value = prompt.value; promptWidget.callback?.(prompt.value); node.graph?.setDirtyCanvas(true, true); };
+  prompt.oninput = () => { promptWidget.value = prompt.value; promptWidget.callback?.(prompt.value); saveBackup(); node.graph?.setDirtyCanvas(true, true); };
   render();
   const minSize = [930, 1070];
   const fixedWidth = minSize[0];
