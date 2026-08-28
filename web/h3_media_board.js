@@ -77,13 +77,19 @@ function injectStyle() {
     .h3-media-board .mb-video-controls { position:absolute; z-index:2; left:7px; right:7px; bottom:26px; display:grid; grid-template-columns:28px 72px 1fr; align-items:center; gap:7px; padding:3px 5px; border-radius:5px; background:#080a0ab8; }
     .h3-media-board .mb-video-controls .mb-audio-time { font-size:11px; }
     .h3-media-board .mb-name { position:absolute; bottom:0; left:0; right:0; z-index:2; padding:4px 7px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; background:#111c; }
-    .h3-media-board .mb-settings { display:grid; grid-template-columns:repeat(3, 1fr); gap:7px; margin-top:10px; padding:8px; border:1px solid #505960; border-radius:7px; background:#191d21; }
-    .h3-media-board .mb-setting { display:flex; align-items:center; gap:5px; min-width:0; color:#bfc8ce; white-space:nowrap; }
-    .h3-media-board .mb-setting label { color:#aeb8bf; }
-    .h3-media-board .mb-setting input, .h3-media-board .mb-setting select { min-width:0; width:100%; padding:4px 5px; color:#edf2f5; background:#111417; border:1px solid #56616a; border-radius:4px; font:12px system-ui, sans-serif; }
-    .h3-media-board .mb-setting input[type="checkbox"] { width:auto; accent-color:#69ee7a; }
+    .h3-media-board .mb-settings { position:relative; display:grid; grid-template-columns:repeat(3, 1fr); gap:9px 11px; margin:16px 0 2px; padding:27px 12px 11px; border:1px solid #4c626a; border-radius:9px; background:linear-gradient(145deg,#20282e 0%,#171c20 100%); box-shadow:inset 0 1px #ffffff08, 0 2px 8px #0004; }
+    .h3-media-board .mb-settings-head { position:absolute; top:-11px; left:12px; display:flex; align-items:center; gap:8px; padding:3px 9px; border:1px solid #4c626a; border-radius:6px; color:#edf4f7; background:#20282e; }
+    .h3-media-board .mb-settings-title { color:#8de9f4; font-size:12px; font-weight:800; letter-spacing:.35px; }
+    .h3-media-board .mb-settings-caption { color:#87949d; font-size:10px; }
+    .h3-media-board .mb-setting { display:flex; flex-direction:column; align-items:stretch; gap:4px; min-width:0; color:#bfc8ce; }
+    .h3-media-board .mb-setting label { color:#9eabb4; font-size:10px; font-weight:700; letter-spacing:.2px; }
+    .h3-media-board .mb-setting input, .h3-media-board .mb-setting select { box-sizing:border-box; min-width:0; width:100%; height:29px; padding:4px 7px; color:#edf2f5; background:#101417; border:1px solid #4b5b64; border-radius:5px; outline:none; font:12px system-ui, sans-serif; }
+    .h3-media-board .mb-setting input:focus, .h3-media-board .mb-setting select:focus { border-color:#78d7e3; box-shadow:0 0 0 2px #78d7e322; }
+    .h3-media-board .mb-setting-checkbox { flex-direction:row; align-items:center; justify-content:space-between; padding:0 8px; height:48px; border:1px solid #43545c; border-radius:6px; background:#151b1f; }
+    .h3-media-board .mb-setting-checkbox label { color:#c9d6da; font-size:11px; }
+    .h3-media-board .mb-setting input[type="checkbox"] { width:auto; height:auto; padding:0; accent-color:#69ee7a; transform:scale(1.18); }
     .h3-media-board .mb-setting input:disabled { opacity:.45; cursor:not-allowed; }
-    .h3-media-board .mb-output-summary { grid-column:1 / -1; color:#72e682; font-weight:700; letter-spacing:.1px; }
+    .h3-media-board .mb-output-summary { grid-column:1 / -1; padding:7px 9px; border-left:3px solid #69ee7a; border-radius:4px; color:#76ec87; background:#13271a; font-size:13px; font-weight:800; letter-spacing:.15px; }
     .h3-media-board textarea { display:block; box-sizing:border-box; flex:1 1 auto; width:100%; min-height:145px; margin:9px 0 4px; padding:8px; resize:none; color:#ececec; background:#15181b; border:1px solid #586168; border-radius:6px; font:12px ui-monospace, Consolas, monospace; }
     .mb-preview { position:fixed; z-index:10000; inset:0; display:grid; place-items:center; background:#000b; } .mb-preview img { max-width:90vw; max-height:90vh; }
   `;
@@ -268,12 +274,16 @@ function makeCard(kind, index, asset, update) {
 
 function makeH3SettingsPanel(widgets, node) {
   const panel = document.createElement("div"); panel.className = "mb-settings";
+  const header = document.createElement("div"); header.className = "mb-settings-head";
+  const title = document.createElement("span"); title.className = "mb-settings-title"; title.textContent = "H3 生成参数";
+  const caption = document.createElement("span"); caption.className = "mb-settings-caption"; caption.textContent = "时长 · 画幅 · 尺寸 · 帧数";
+  header.append(title, caption); panel.appendChild(header);
   const summaryText = () => {
     const settings = h3Settings(widgets.duration.value, widgets.aspect_ratio.value, widgets.megapixels.value, widgets.multiple.value, widgets.auto_calculate.value, widgets.manual_frames.value);
     return `H3 输出：${settings.width} × ${settings.height} · ${settings.frames} 帧 · ${settings.autoCalculate ? "自动对齐 · " : "手动设置 · "}24 fps`;
   };
   const createControl = (name, label, type, options = {}) => {
-    const field = document.createElement("div"); field.className = "mb-setting";
+    const field = document.createElement("div"); field.className = `mb-setting mb-setting-${type}`;
     const caption = document.createElement("label"); caption.textContent = label;
     const input = type === "select" ? document.createElement("select") : document.createElement("input");
     const widget = widgets[name];
