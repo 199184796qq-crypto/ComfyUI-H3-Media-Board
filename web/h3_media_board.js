@@ -1267,7 +1267,11 @@ function createDynamicMediaBoard(node) {
     };
     const imageHeight = sectionHeight(state.image.length, 75);
     const audioHeight = node._dynamicAudioCollapsed ? 0 : sectionHeight(state.audio.length, 63);
-    const height = Math.max(170, 54 + imageHeight + 30 + audioHeight);
+    // LiteGraph lays the DOM widget below every visible output port.  Reserve
+    // that space too, otherwise images can push the audio section below the
+    // node boundary as more media outputs are added.
+    const outputPortHeight = (state.image.length + state.audio.length) * 20;
+    const height = Math.max(170, 54 + outputPortHeight + imageHeight + 30 + audioHeight);
     const visibleImages = Math.min(DYNAMIC_MEDIA_LIMIT, state.image.length + 1);
     const visibleAudio = node._dynamicAudioCollapsed ? 0 : Math.min(DYNAMIC_MEDIA_LIMIT, state.audio.length + 1);
     const columns = Math.max(1, Math.min(DYNAMIC_MEDIA_COLUMNS, Math.max(visibleImages, visibleAudio)));
