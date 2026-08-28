@@ -135,6 +135,7 @@ function injectStyle() {
     .h3-media-board .mb-prompt-editor:empty::before { content:attr(data-placeholder); color:#707981; pointer-events:none; }
     .h3-media-board .mb-media-ref { color:#ff626b; font-weight:800; text-shadow:0 0 8px #ff4e5a55; }
     .h3-media-board .mb-dialogue { color:#ffd45d; font-weight:700; text-shadow:0 0 8px #ffcc4550; }
+    .h3-media-board .mb-at-symbol { color:#67ee80; font-weight:900; text-shadow:0 0 8px #57e97966; }
     .h3-media-board .mb-mention-menu { position:absolute; z-index:20; width:268px; max-height:156px; overflow:auto; padding:4px; border:1px solid #75454b; border-radius:7px; background:#211a1deF; box-shadow:0 8px 20px #000b; user-select:none; }
     .h3-media-board .mb-mention-option { display:grid; grid-template-columns:36px minmax(0,1fr) auto; align-items:center; gap:7px; width:100%; min-height:38px; padding:4px; border:0; border-radius:5px; color:#e9e1e3; background:transparent; text-align:left; cursor:pointer; font:11px system-ui,sans-serif; }
     .h3-media-board .mb-mention-option:hover, .h3-media-board .mb-mention-option.active { background:#4a2a31; }
@@ -578,21 +579,31 @@ function makePromptEditor(promptWidget, node, getState, saveBackup) {
     const fragment = document.createDocumentFragment();
     const matcher = /<(Picture|Audio|Video)\s+([1-9]\d*)>/g;
     const dialogue = dialogueRanges(value);
+    const appendPiece = (text, className = "") => {
+      for (const part of text.split(/(@)/)) {
+        if (!part) continue;
+        if (part === "@") {
+          const at = document.createElement("span"); at.className = "mb-at-symbol"; at.textContent = part; fragment.appendChild(at);
+        } else if (className) {
+          const styled = document.createElement("span"); styled.className = className; styled.textContent = part;
+          if (className === "mb-dialogue") { styled.style.color = "#ffd45d"; styled.style.fontWeight = "700"; }
+          fragment.appendChild(styled);
+        } else fragment.appendChild(document.createTextNode(part));
+      }
+    };
     const appendText = (text, offset) => {
       let position = 0;
       const end = offset + text.length;
       for (const [rangeStart, rangeEnd] of dialogue) {
         const start = Math.max(offset, rangeStart); const finish = Math.min(end, rangeEnd);
         if (finish <= start) continue;
-        if (start > offset + position) fragment.appendChild(document.createTextNode(text.slice(position, start - offset)));
-        const spoken = document.createElement("span"); spoken.className = "mb-dialogue";
+        if (start > offset + position) appendPiece(text.slice(position, start - offset));
         // Inline fallback makes dialogue remain visibly yellow even when a
         // browser keeps an older cached stylesheet during a ComfyUI refresh.
-        spoken.style.color = "#ffd45d"; spoken.style.fontWeight = "700";
-        spoken.textContent = text.slice(start - offset, finish - offset); fragment.appendChild(spoken);
+        appendPiece(text.slice(start - offset, finish - offset), "mb-dialogue");
         position = finish - offset;
       }
-      if (position < text.length) fragment.appendChild(document.createTextNode(text.slice(position)));
+      if (position < text.length) appendPiece(text.slice(position));
     };
     let cursor = 0;
     for (let match = matcher.exec(value); match; match = matcher.exec(value)) {
