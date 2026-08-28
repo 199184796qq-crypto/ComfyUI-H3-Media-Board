@@ -134,7 +134,7 @@ function injectStyle() {
     .h3-media-board .mb-prompt-editor { box-sizing:border-box; width:100%; min-height:145px; padding:8px; overflow:auto; color:#ececec; background:#15181b; border:1px solid #586168; border-radius:6px; outline:none; white-space:pre-wrap; overflow-wrap:anywhere; user-select:text; font:12px ui-monospace, Consolas, monospace; }
     .h3-media-board .mb-prompt-editor:focus { border-color:#78d7e3; box-shadow:0 0 0 2px #78d7e322; }
     .h3-media-board .mb-prompt-editor:empty::before { content:attr(data-placeholder); color:#707981; pointer-events:none; }
-    .h3-media-board .mb-media-ref { color:#ff626b; font-weight:800; text-shadow:0 0 8px #ff4e5a55; }
+    .h3-media-board .mb-media-ref { color:#ff626b; font-weight:800; text-shadow:0 0 8px #ff4e5a55; cursor:help; }
     .h3-media-board .mb-dialogue { color:#ffd45d; font-weight:700; text-shadow:0 0 8px #ffcc4550; }
     .h3-media-board .mb-at-symbol { color:#67ee80; font-weight:900; text-shadow:0 0 8px #57e97966; }
     .h3-media-board .mb-mention-menu { position:absolute; z-index:20; width:268px; max-height:156px; overflow:auto; padding:4px; border:1px solid #75454b; border-radius:7px; background:#211a1deF; box-shadow:0 8px 20px #000b; user-select:none; }
@@ -145,6 +145,12 @@ function injectStyle() {
     .h3-media-board .mb-mention-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .h3-media-board .mb-mention-token { color:#ff8188; font:10px ui-monospace,Consolas,monospace; white-space:nowrap; }
     .h3-media-board .mb-mention-empty { padding:8px; color:#aa9da0; font-size:11px; }
+    .mb-reference-preview { position:fixed; z-index:10005; width:270px; overflow:hidden; padding:7px; border:1px solid #94525a; border-radius:8px; color:#f2e8ea; background:#21171beF; box-shadow:0 10px 26px #000c; font:12px system-ui,sans-serif; pointer-events:none; }
+    .mb-reference-preview.interactive { pointer-events:auto; border-color:#67ee80; box-shadow:0 10px 26px #000c,0 0 0 2px #67ee8033; }
+    .mb-reference-preview[hidden] { display:none; }
+    .mb-reference-preview-title { display:block; margin-bottom:5px; overflow:hidden; color:#ffadb2; text-overflow:ellipsis; white-space:nowrap; font-weight:800; }
+    .mb-reference-preview img, .mb-reference-preview video { display:block; width:270px; max-height:180px; object-fit:contain; background:#08090a; border-radius:5px; }
+    .mb-reference-preview audio { display:block; width:270px; }
     .mb-preview { position:fixed; z-index:10000; inset:0; display:grid; place-items:center; background:#000b; } .mb-preview img { max-width:90vw; max-height:90vh; }
   `;
   document.head.appendChild(style);
@@ -500,6 +506,58 @@ function makePromptEditor(promptWidget, node, getState, saveBackup) {
   menu.hidden = true;
   shell.append(editor, menu);
 
+  const referencePreview = document.createElement("div");
+  referencePreview.className = "mb-reference-preview"; referencePreview.hidden = true;
+  document.body.appendChild(referencePreview);
+  const referenceAsset = (type, index) => {
+    const kind = ({ Picture: "image", Audio: "audio", Video: "video" })[type];
+    return kind ? { kind, asset: getState()[kind]?.[Number(index) - 1] } : null;
+  };
+  const placeReferencePreview = (event) => {
+    const gap = 14, width = referencePreview.offsetWidth || 284, height = referencePreview.offsetHeight || 120;
+    const left = Math.max(6, Math.min(event.clientX + gap, window.innerWidth - width - 6));
+    const top = Math.max(6, Math.min(event.clientY + gap, window.innerHeight - height - 6));
+    referencePreview.style.left = `${left}px`; referencePreview.style.top = `${top}px`;
+  };
+  let referenceHideTimer = null;
+  let previewCtrlHeld = false;
+  const setPreviewInteractive = (active) => {
+    previewCtrlHeld = Boolean(active);
+    referencePreview.classList.toggle("interactive", previewCtrlHeld);
+  };
+  const cancelReferencePreviewHide = () => { if (referenceHideTimer) clearTimeout(referenceHideTimer); referenceHideTimer = null; };
+  const hideReferencePreview = () => {
+    cancelReferencePreviewHide(); referencePreview.hidden = true;
+    referencePreview.classList.remove("interactive"); referencePreview.replaceChildren();
+  };
+  const scheduleReferencePreviewHide = () => {
+    cancelReferencePreviewHide();
+    referenceHideTimer = setTimeout(() => { if (!referencePreview.matches(":hover")) hideReferencePreview(); }, 180);
+  };
+  const previewKeyChange = (event) => {
+    if (!referencePreview.hidden) setPreviewInteractive(event.ctrlKey);
+  };
+  document.addEventListener("keydown", previewKeyChange, true);
+  document.addEventListener("keyup", previewKeyChange, true);
+  referencePreview.onpointerenter = cancelReferencePreviewHide;
+  referencePreview.onpointerleave = scheduleReferencePreviewHide;
+  const showReferencePreview = (type, index, event) => {
+    const reference = referenceAsset(type, index);
+    if (!reference?.asset) { hideReferencePreview(); return; }
+    cancelReferencePreviewHide(); setPreviewInteractive(event.ctrlKey);
+    const title = document.createElement("span"); title.className = "mb-reference-preview-title";
+    title.textContent = `<${type} ${index}> · ${reference.asset.name || "已上传素材"}${reference.kind === "image" ? "" : "（按住 Ctrl 可播放）"}`;
+    referencePreview.replaceChildren(title);
+    if (reference.kind === "image") {
+      const image = new Image(); image.src = viewUrl(reference.asset.path); image.alt = title.textContent; referencePreview.appendChild(image);
+    } else if (reference.kind === "audio") {
+      const audio = document.createElement("audio"); audio.controls = true; audio.preload = "metadata"; audio.src = viewUrl(reference.asset.path); referencePreview.appendChild(audio);
+    } else {
+      const video = document.createElement("video"); video.controls = true; video.muted = true; video.preload = "metadata"; video.src = viewUrl(reference.asset.path); referencePreview.appendChild(video);
+    }
+    referencePreview.hidden = false; placeReferencePreview(event);
+  };
+
   let mention = null;
   let activeIndex = 0;
   let menuPointerDown = false;
@@ -577,6 +635,7 @@ function makePromptEditor(promptWidget, node, getState, saveBackup) {
     }, []);
   };
   const renderText = (value, caret = null) => {
+    hideReferencePreview();
     const fragment = document.createDocumentFragment();
     const matcher = /<(Picture|Audio|Video)\s+([1-9]\d*)>/g;
     const dialogue = dialogueRanges(value);
@@ -610,8 +669,13 @@ function makePromptEditor(promptWidget, node, getState, saveBackup) {
     for (let match = matcher.exec(value); match; match = matcher.exec(value)) {
       if (match.index > cursor) appendText(value.slice(cursor, match.index), cursor);
       if (isAvailableReference(match[1], match[2])) {
+        const referenceType = match[1], referenceIndex = match[2];
         const reference = document.createElement("span");
-        reference.className = "mb-media-ref"; reference.textContent = match[0]; fragment.appendChild(reference);
+        reference.className = "mb-media-ref"; reference.textContent = match[0];
+        reference.onpointerenter = (event) => showReferencePreview(referenceType, referenceIndex, event);
+        reference.onpointermove = placeReferencePreview;
+        reference.onpointerleave = scheduleReferencePreviewHide;
+        fragment.appendChild(reference);
       } else fragment.appendChild(document.createTextNode(match[0]));
       cursor = match.index + match[0].length;
     }
@@ -714,6 +778,11 @@ function makePromptEditor(promptWidget, node, getState, saveBackup) {
   shell.refreshReferences = () => {
     const caret = document.activeElement === editor ? saveSelectionOffset() : null;
     renderText(currentText(), caret); updateMention();
+  };
+  shell.disposeReferencePreview = () => {
+    hideReferencePreview(); referencePreview.remove();
+    document.removeEventListener("keydown", previewKeyChange, true);
+    document.removeEventListener("keyup", previewKeyChange, true);
   };
   renderText(String(promptWidget.value || ""));
   return shell;
@@ -909,6 +978,7 @@ function createBoard(node) {
   const priorRemoved = node.onRemoved;
   node.onRemoved = function (...args) {
     stopMiddlePan();
+    prompt.disposeReferencePreview?.();
     document.removeEventListener("dragover", captureDragOver, true);
     document.removeEventListener("drop", captureDrop, true);
     priorRemoved?.apply(this, args);
