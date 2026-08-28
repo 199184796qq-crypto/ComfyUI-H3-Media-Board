@@ -49,8 +49,8 @@ def _safe_relative_path(value: str) -> Path:
     return candidate
 
 
-def _clean_manifest(raw: str | list[dict[str, Any]] | None) -> dict[str, list[dict[str, str]]]:
-    result: dict[str, list[dict[str, str]]] = {kind: [] for kind in MAX_COUNTS}
+def _clean_manifest(raw: str | dict[str, Any] | list[dict[str, Any]] | None) -> dict[str, list[dict[str, str] | None]]:
+    result: dict[str, list[dict[str, str] | None]] = {kind: [] for kind in MAX_COUNTS}
     try:
         parsed = json.loads(raw) if isinstance(raw, str) else (raw or {})
     except json.JSONDecodeError:
@@ -64,12 +64,18 @@ def _clean_manifest(raw: str | list[dict[str, Any]] | None) -> dict[str, list[di
             continue
         for item in items[:limit]:
             if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+                if kind == "image":
+                    result[kind].append(None)
                 continue
             try:
                 path = _safe_relative_path(item["path"])
             except ValueError:
+                if kind == "image":
+                    result[kind].append(None)
                 continue
             if not path.is_file():
+                if kind == "image":
+                    result[kind].append(None)
                 continue
             result[kind].append(
                 {
@@ -301,7 +307,10 @@ class H3MediaBoardUnpack:
 
     def unpack(self, media_board: dict[str, Any]):
         manifest = _clean_manifest(media_board)
-        images = [_load_image(item) for item in manifest["image"]]
+        # image[0] and image[1] are H3's first/last frame positions.  A None
+        # at image[0] must remain a real empty first-frame socket instead of
+        # shifting the tail frame into it.
+        images = [_load_image(item) if item is not None else None for item in manifest["image"]]
         images += [None] * (MAX_COUNTS["image"] - len(images))
         audios = [_load_audio(item) for item in manifest["audio"]]
         audios += [None] * (MAX_COUNTS["audio"] - len(audios))
@@ -429,7 +438,7 @@ class H3VideoModeControl:
         # video, requires H3's multi-reference preparation path.
         manifest = _clean_manifest(media_board)
         needs_multi_reference = (
-            len(manifest["image"]) >= 3
+            sum(item is not None for item in manifest["image"]) >= 3
             or bool(manifest["audio"])
             or bool(manifest["video"])
         )

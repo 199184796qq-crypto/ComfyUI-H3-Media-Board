@@ -37,13 +37,26 @@ function viewUrl(path) {
 function readManifest(widget) {
   try {
     const parsed = JSON.parse(widget.value || "{}");
-    return Object.fromEntries(Object.keys(LIMITS).map((kind) => [kind, Array.isArray(parsed[kind]) ? parsed[kind].filter(Boolean).slice(0, LIMITS[kind]) : []]));
+    return Object.fromEntries(Object.keys(LIMITS).map((kind) => {
+      if (!Array.isArray(parsed[kind])) return [kind, []];
+      // Slot 1 is the H3 first frame and slot 2 is the last frame.  Keep a
+      // deliberately empty first slot so a last-frame-only workflow survives.
+      if (kind === "image") return [kind, parsed[kind].slice(0, LIMITS[kind]).map((item) => item || null)];
+      return [kind, parsed[kind].filter(Boolean).slice(0, LIMITS[kind])];
+    }));
   } catch (_) {
     return { image: [], audio: [], video: [] };
   }
 }
 
 function compactMedia(state, kind) {
+  if (kind === "image") {
+    const images = Array.isArray(state.image) ? state.image.slice(0, LIMITS.image) : [];
+    // Keep image_1 in place (it is the optional first frame); compact only
+    // image_2 onward so deleting a later reference still renumbers the tail.
+    state.image = [images[0] || null, ...images.slice(1).filter(Boolean).slice(0, LIMITS.image - 1)];
+    return;
+  }
   state[kind] = Array.isArray(state[kind]) ? state[kind].filter(Boolean).slice(0, LIMITS[kind]) : [];
 }
 
@@ -87,6 +100,7 @@ function injectStyle() {
     .h3-media-board .mb-card.empty { display:flex; align-items:center; justify-content:center; color:#9aa2a9; }
     .h3-media-board .mb-card:not(.empty) { border-style:solid; border-color:#485057; }
     .h3-media-board .mb-index { position:absolute; z-index:3; top:6px; left:6px; padding:2px 7px; border-radius:6px; background:#111a; font-weight:800; }
+    .h3-media-board .mb-frame-role { position:absolute; z-index:3; top:6px; left:50%; transform:translateX(-50%); padding:2px 8px; border:1px solid #637b85; border-radius:99px; color:#d8f4f7; background:#13232acc; font-size:10px; font-weight:800; white-space:nowrap; }
     .h3-media-board .mb-remove, .h3-media-board .mb-replace { position:absolute; z-index:3; border:0; color:#fff; background:#16191dcc; border-radius:5px; cursor:pointer; }
     .h3-media-board .mb-remove { top:5px; right:5px; width:22px; height:22px; font-size:18px; line-height:18px; }
     .h3-media-board .mb-replace { bottom:25px; right:5px; font-size:11px; padding:3px 6px; }
@@ -307,6 +321,8 @@ function makeCard(kind, index, asset, update) {
   card.className = `mb-card mb-${kind}${asset ? "" : " empty"}`;
   card.tabIndex = 0;
   const badge = document.createElement("span"); badge.className = "mb-index"; badge.textContent = String(index + 1); card.appendChild(badge);
+  const frameRole = kind === "image" && index < 2 ? document.createElement("span") : null;
+  if (frameRole) { frameRole.className = "mb-frame-role"; frameRole.textContent = index === 0 ? "首帧" : "尾帧"; card.appendChild(frameRole); }
   card._h3HasAsset = Boolean(asset);
   let uploading = false;
   const showUpload = (file) => {
@@ -367,7 +383,7 @@ function makeCard(kind, index, asset, update) {
     if (!files.some((file) => kindForFile(file) === kind)) return;
     stop(event); await receiveFiles(files);
   };
-  if (!asset) { card.textContent = "点击上传文件"; card.prepend(badge); card.onclick = select; return card; }
+  if (!asset) { card.textContent = "点击上传文件"; card.prepend(badge); if (frameRole) card.appendChild(frameRole); card.onclick = select; return card; }
   if (kind === "image") { const image = new Image(); image.src = viewUrl(asset.path); card.appendChild(image); card.ondblclick = () => openPreview(asset.path); }
   if (kind === "audio") card.appendChild(makeAudioPlayer(asset));
   if (kind === "video") card.appendChild(makeVideoPlayer(asset));
@@ -606,9 +622,9 @@ function makePromptEditor(promptWidget, node, getState, saveBackup) {
     const definitions = [
       ["image", "Picture", "图片"], ["audio", "Audio", "音频"], ["video", "Video", "视频"],
     ];
-    return definitions.flatMap(([kind, tag, label]) => (state[kind] || []).map((asset, index) => ({
+    return definitions.flatMap(([kind, tag, label]) => (state[kind] || []).flatMap((asset, index) => asset ? [{
       kind, asset, index: index + 1, label: `${label} ${index + 1}`, token: `<${tag} ${index + 1}>`,
-    })));
+    }] : []));
   };
   const isAvailableReference = (type, index) => {
     const kind = ({ Picture: "image", Audio: "audio", Video: "video" })[type];
@@ -997,13 +1013,20 @@ function createBoard(node) {
       for (let index = 0; index < LIMITS[kind]; index++) {
         row.appendChild(makeCard(kind, index, state[kind][index], (uploaded) => {
           compactMedia(state, kind);
-          if (uploaded) {
+          if (kind === "image") {
+            if (uploaded) state.image[index] = uploaded;
+            // Slot 1 is allowed to remain blank.  For slot 2 onward splice
+            // pulls the following images up, preserving a continuous tail.
+            else if (index === 0) state.image[0] = null;
+            else state.image.splice(index, 1);
+          } else if (uploaded) {
             // A filled card is deliberately replaced. Dropping/uploading into
             // any empty later card appends after the existing consecutive set.
             if (state[kind][index]) state[kind][index] = uploaded;
             else state[kind].push(uploaded);
           } else state[kind].splice(index, 1);
-          // There are never blank numbers: every operation compacts the row.
+          // Images preserve the intentional first-frame gap; all other media
+          // (and image slots from #2 onward) remain consecutively numbered.
           compactMedia(state, kind);
           persist(state); render();
         }));
@@ -1121,7 +1144,7 @@ function decorateUnpacker(node) {
       valueOf("auto_calculate", true), valueOf("manual_frames", 362),
     );
     node._h3MediaCounts = {
-      image: state.image.length,
+      image: state.image.filter(Boolean).length,
       audio: state.audio.length,
       video: state.video.length,
     };
@@ -1311,7 +1334,7 @@ function decorateVideoModeControl(node) {
     const manifestWidget = board?.widgets?.find((item) => item.name === "media_manifest");
     if (!manifestWidget) { node._h3AutoMode = null; return; }
     const media = readManifest(manifestWidget);
-    const imageCount = media.image.length, audioCount = media.audio.length, videoCount = media.video.length;
+    const imageCount = media.image.filter(Boolean).length, audioCount = media.audio.length, videoCount = media.video.length;
     const useMultiReference = imageCount >= 3 || audioCount > 0 || videoCount > 0;
     const reason = useMultiReference
       ? `检测到图片 ${imageCount} 张、音频 ${audioCount} 个、视频 ${videoCount} 个`
