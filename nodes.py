@@ -616,12 +616,92 @@ class H3SecondPassPreparation:
         return (positive, upscaled_latent)
 
 
+class H3MultiTimeGuide:
+    """Place several native H3 image/audio guides on one conditioning stream."""
+
+    # ComfyUI validates a stable backend schema; the accompanying frontend
+    # exposes only used groups plus one empty next group.
+    MAX_GUIDE_GROUPS = 12
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        required = {
+            "positive": ("CONDITIONING", {"tooltip": "接 H3 图文或多参节点的正向条件，也可接上一个引导节点的 positive。"}),
+            "latent": ("LATENT", {"tooltip": "接与该正向条件配套的 MiniMax H3 AV latent。"}),
+            "frame_idx": (
+                "INT",
+                {"default": 0, "min": -9999, "max": 9999, "step": 1, "label": "第 1 组注入起始帧"},
+            ),
+        }
+        optional = {
+            "vae": ("VAE", {"label": "视频 VAE", "tooltip": "注入图片/帧串时需要 H3 视频 VAE。"}),
+            "audio_vae": ("VAE", {"label": "音频 VAE", "tooltip": "注入音频时需要 H3 音频 VAE。"}),
+            "guide_image": ("IMAGE", {"label": "第 1 组图片 / 帧串", "tooltip": "第 1 组：可接单张图片、视频帧批次或多帧图片序列。"}),
+            "guide_audio": ("AUDIO", {"label": "第 1 组音频", "tooltip": "第 1 组：可选，从该组起始帧开始注入音频。"}),
+        }
+        for group_index in range(2, cls.MAX_GUIDE_GROUPS + 1):
+            required[f"frame_idx_{group_index}"] = (
+                "INT",
+                {
+                    "default": 0, "min": -9999, "max": 9999, "step": 1,
+                    "label": f"第 {group_index} 组注入起始帧",
+                },
+            )
+            optional[f"guide_image_{group_index}"] = (
+                "IMAGE",
+                {"label": f"第 {group_index} 组图片 / 帧串", "tooltip": f"第 {group_index} 组：可接单张图片、视频帧批次或多帧图片序列。"},
+            )
+            optional[f"guide_audio_{group_index}"] = (
+                "AUDIO",
+                {"label": f"第 {group_index} 组音频", "tooltip": f"第 {group_index} 组：可选，从该组起始帧开始注入音频。"},
+            )
+        return {"required": required, "optional": optional}
+
+    RETURN_TYPES = ("CONDITIONING",)
+    RETURN_NAMES = ("positive",)
+    FUNCTION = "guide"
+    CATEGORY = "H3 / Media"
+
+    def guide(
+        self,
+        positive: Any,
+        latent: dict[str, Any],
+        frame_idx: int,
+        vae: Any = None,
+        audio_vae: Any = None,
+        guide_image: torch.Tensor | None = None,
+        guide_audio: dict[str, Any] | None = None,
+        **additional_guides: Any,
+    ):
+        try:
+            from comfy_extras.nodes_minimax_h3 import MiniMaxH3AddGuide
+        except ImportError as error:
+            raise RuntimeError("未找到 ComfyUI 原生 MiniMax H3 节点；请更新 ComfyUI 后再使用 H3 多时间点引导帧。") from error
+
+        guide_groups = [(frame_idx, guide_image, guide_audio)]
+        for group_index in range(2, self.MAX_GUIDE_GROUPS + 1):
+            guide_groups.append((
+                additional_guides.get(f"frame_idx_{group_index}", 0),
+                additional_guides.get(f"guide_image_{group_index}"),
+                additional_guides.get(f"guide_audio_{group_index}"),
+            ))
+        for guide_frame_idx, image, audio in guide_groups:
+            if image is None and audio is None:
+                continue
+            positive = MiniMaxH3AddGuide.execute(
+                positive, latent, int(guide_frame_idx),
+                vae=vae, audio_vae=audio_vae, image=image, audio=audio,
+            )[0]
+        return (positive,)
+
+
 NODE_CLASS_MAPPINGS = {
     "H3MediaBoard": H3MediaBoard,
     "H3MediaBoardUnpack": H3MediaBoardUnpack,
     "H3ConditionLatentSwitch": H3ConditionLatentSwitch,
     "H3VideoModeControl": H3VideoModeControl,
     "H3SecondPassPreparation": H3SecondPassPreparation,
+    "H3MultiTimeGuide": H3MultiTimeGuide,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -630,4 +710,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3ConditionLatentSwitch": "H3 条件与 Latent 切换",
     "H3VideoModeControl": "H3 生视频模式控制",
     "H3SecondPassPreparation": "H3 二采准备（高分条件 / 注入帧）",
+    "H3MultiTimeGuide": "H3 多时间点引导帧",
 }
