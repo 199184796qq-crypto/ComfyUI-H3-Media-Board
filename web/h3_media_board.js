@@ -77,6 +77,7 @@ function injectStyle() {
     .h3-mode-control .h3-mode-options { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
     .h3-mode-control .h3-mode-option { min-height:46px; padding:7px 8px; border:1px solid #40545e; border-radius:7px; color:#b9c6cc; background:#131a20; text-align:left; cursor:pointer; transition:background .14s,border-color .14s,box-shadow .14s; }
     .h3-mode-control .h3-mode-option:hover { border-color:#75cce4; }
+    .h3-mode-control .h3-mode-option:disabled { cursor:default; opacity:.82; }
     .h3-mode-control .h3-mode-option.active { border-color:#65d9e9; color:#ebfbff; background:linear-gradient(135deg,#174e5a,#153740); box-shadow:inset 3px 0 #6be7f0,0 0 0 1px #63dce522; }
     .h3-mode-control .h3-mode-option strong { display:block; font-size:12px; }
     .h3-mode-control .h3-mode-option small { display:block; margin-top:3px; color:#91a7b0; font-size:10px; }
@@ -1211,11 +1212,51 @@ function decorateVideoModeControl(node) {
   multiReference.innerHTML = "<strong>多参参考</strong><small>输出多参条件与 Latent</small>";
   options.append(imageText, multiReference);
   const status = document.createElement("div"); status.className = "h3-mode-status";
+  const boardSource = () => {
+    const index = node.inputs?.findIndex((input) => input.name === "media_board") ?? -1;
+    if (index < 0) return null;
+    const link = node.inputs?.[index]?.link;
+    return node.getInputNode?.(index)
+      || (link != null ? node.graph?.getNodeById(node.graph.links?.[link]?.origin_id) : null);
+  };
+  const originalBoard = (start) => {
+    const visited = new Set(); let current = start;
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      if (current.comfyClass === "H3MediaBoard") return current;
+      const index = current.inputs?.findIndex((input) => input.name === "media_board") ?? -1;
+      if (index < 0) return null;
+      const link = current.inputs?.[index]?.link;
+      current = current.getInputNode?.(index)
+        || (link != null ? current.graph?.getNodeById(current.graph.links?.[link]?.origin_id) : null);
+    }
+    return null;
+  };
+  const syncAutoMode = () => {
+    const board = originalBoard(boardSource());
+    const manifestWidget = board?.widgets?.find((item) => item.name === "media_manifest");
+    if (!manifestWidget) { node._h3AutoMode = null; return; }
+    const media = readManifest(manifestWidget);
+    const imageCount = media.image.length, audioCount = media.audio.length, videoCount = media.video.length;
+    const useMultiReference = imageCount >= 3 || audioCount > 0 || videoCount > 0;
+    const reason = useMultiReference
+      ? `检测到图片 ${imageCount} 张、音频 ${audioCount} 个、视频 ${videoCount} 个`
+      : `检测到图片 ${imageCount} 张，暂无音频或视频`;
+    node._h3AutoMode = { useImageText: !useMultiReference, reason };
+    if (Boolean(widget.value) !== !useMultiReference) {
+      widget.value = !useMultiReference; widget.callback?.(widget.value);
+      node.graph?.setDirtyCanvas(true, true);
+    }
+  };
   const paint = () => {
     const isImageText = Boolean(widget.value);
+    const automatic = node._h3AutoMode;
     imageText.classList.toggle("active", isImageText);
     multiReference.classList.toggle("active", !isImageText);
-    status.textContent = `当前输出：${isImageText ? "图文 / 图生" : "多参参考"} → 接到 H3 条件与 Latent 切换的 external_switch`;
+    imageText.disabled = Boolean(automatic); multiReference.disabled = Boolean(automatic);
+    status.textContent = automatic
+      ? `自动切换：${automatic.reason} → ${isImageText ? "图文 / 图生" : "多参参考"}`
+      : `当前输出：${isImageText ? "图文 / 图生" : "多参参考"} → 接到 H3 条件与 Latent 切换的 external_switch`;
   };
   const choose = (value) => {
     widget.value = value; widget.callback?.(value);
@@ -1242,7 +1283,11 @@ function decorateVideoModeControl(node) {
     getHeight: () => 108,
   });
   node.setSize?.(fixedSize);
-  paint();
+  const previousConnections = node.onConnectionsChange;
+  node.onConnectionsChange = function (...args) { previousConnections?.apply(this, args); syncAutoMode(); paint(); };
+  const previousDraw = node.onDrawForeground;
+  node.onDrawForeground = function (ctx) { previousDraw?.call(this, ctx); syncAutoMode(); paint(); };
+  syncAutoMode(); paint();
 }
 
 function removeLegacyConditionBoardPort(node) {
