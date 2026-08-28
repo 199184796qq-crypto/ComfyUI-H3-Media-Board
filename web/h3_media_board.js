@@ -535,7 +535,11 @@ function makePromptEditor(promptWidget, node, getState, saveBackup) {
     referenceHideTimer = setTimeout(() => { if (!referencePreview.matches(":hover")) hideReferencePreview(); }, 180);
   };
   const previewKeyChange = (event) => {
-    if (!referencePreview.hidden) setPreviewInteractive(event.ctrlKey);
+    if (referencePreview.hidden) return;
+    // Ctrl turns the hover card into a fixed, interactive player.  Releasing
+    // Ctrl is an explicit exit gesture, so the card disappears immediately.
+    if (event.type === "keyup" && !event.ctrlKey) { hideReferencePreview(); return; }
+    setPreviewInteractive(event.ctrlKey);
   };
   document.addEventListener("keydown", previewKeyChange, true);
   document.addEventListener("keyup", previewKeyChange, true);
@@ -673,7 +677,7 @@ function makePromptEditor(promptWidget, node, getState, saveBackup) {
         const reference = document.createElement("span");
         reference.className = "mb-media-ref"; reference.textContent = match[0];
         reference.onpointerenter = (event) => showReferencePreview(referenceType, referenceIndex, event);
-        reference.onpointermove = placeReferencePreview;
+        reference.onpointermove = (event) => { if (!event.ctrlKey) placeReferencePreview(event); };
         reference.onpointerleave = scheduleReferencePreviewHide;
         fragment.appendChild(reference);
       } else fragment.appendChild(document.createTextNode(match[0]));
