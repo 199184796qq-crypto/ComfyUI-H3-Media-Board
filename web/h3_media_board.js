@@ -1,6 +1,7 @@
 import { app } from "../../scripts/app.js";
 
 const LIMITS = { image: 9, audio: 3, video: 3 };
+const DYNAMIC_MEDIA_LIMIT = 64;
 const LABELS = { image: "参考图片", audio: "参考音频", video: "参考视频" };
 const ACCEPTS = { image: "image/*", audio: "audio/*", video: "video/*" };
 const H3_RATIOS = {
@@ -94,6 +95,9 @@ function injectStyle() {
     /* Media, H3 settings, Noise and the prompt must all remain inside the node.
        Extra vertical room is intentionally assigned to the prompt textarea. */
     .h3-media-board { display:flex; flex-direction:column; box-sizing:border-box; width:100%; height:100%; min-width:900px; max-width:900px; min-height:1170px; color:#ddd; font:12px system-ui, sans-serif; user-select:none; }
+    .h3-dynamic-media-board { min-height:0; height:auto; padding-bottom:8px; }
+    .h3-dynamic-media-board .mb-dynamic-grid { display:grid; grid-template-columns:repeat(3, 294px); gap:7px; }
+    .h3-dynamic-media-board .mb-title { margin-top:10px; }
     .h3-media-board .mb-title { margin: 8px 0 5px; color:#c9c9c9; font-weight:700; }
     .h3-media-board .mb-row { display:flex; gap:7px; min-height:78px; }
     .h3-media-board .mb-image-grid { display:grid; grid-template-columns:repeat(3, 294px); gap:7px; }
@@ -342,12 +346,12 @@ function makeVideoPlayer(asset) {
   return player;
 }
 
-function makeCard(kind, index, asset, update) {
+function makeCard(kind, index, asset, update, config = {}) {
   const card = document.createElement("div");
   card.className = `mb-card mb-${kind}${asset ? "" : " empty"}`;
   card.tabIndex = 0;
   const badge = document.createElement("span"); badge.className = "mb-index"; badge.textContent = String(index + 1); card.appendChild(badge);
-  const frameRole = kind === "image" && index < 2 ? document.createElement("span") : null;
+  const frameRole = config.frameRoles !== false && kind === "image" && index < 2 ? document.createElement("span") : null;
   if (frameRole) { frameRole.className = "mb-frame-role"; frameRole.textContent = index === 0 ? "首帧" : "尾帧"; card.appendChild(frameRole); }
   card._h3HasAsset = Boolean(asset);
   let uploading = false;
@@ -1130,6 +1134,134 @@ function createBoard(node) {
   return domWidget;
 }
 
+const DYNAMIC_MEDIA_SAVE_PROPERTY = "dynamic_media_board_saved";
+
+function readDynamicMediaManifest(widget) {
+  try {
+    const parsed = JSON.parse(widget?.value || "{}");
+    return Object.fromEntries(["image", "audio"].map((kind) => [
+      kind,
+      Array.isArray(parsed?.[kind])
+        ? parsed[kind].filter((item) => item && typeof item.path === "string").slice(0, DYNAMIC_MEDIA_LIMIT)
+        : [],
+    ]));
+  } catch (_) {
+    return { image: [], audio: [] };
+  }
+}
+
+function createDynamicMediaBoard(node) {
+  if (node._dynamicMediaBoardCreated) return;
+  injectStyle();
+  const manifestWidget = node.widgets?.find((widget) => widget.name === "media_manifest");
+  if (!manifestWidget) {
+    const attempts = node._dynamicMediaBoardAttempts || 0;
+    if (attempts < 8 && !node._dynamicMediaBoardPending) {
+      node._dynamicMediaBoardAttempts = attempts + 1;
+      node._dynamicMediaBoardPending = true;
+      setTimeout(() => { node._dynamicMediaBoardPending = false; createDynamicMediaBoard(node); }, 80 * (attempts + 1));
+    }
+    return;
+  }
+  node._dynamicMediaBoardCreated = true;
+  manifestWidget.hidden = true;
+  manifestWidget.options = manifestWidget.options || {};
+  manifestWidget.options.hidden = true;
+  manifestWidget.serialize = true;
+  manifestWidget.serializeValue = () => manifestWidget.value;
+  manifestWidget.computeSize = () => [0, -4];
+  manifestWidget.draw = () => {};
+  if (manifestWidget.element) manifestWidget.element.style.display = "none";
+
+  const saved = node.properties?.[DYNAMIC_MEDIA_SAVE_PROPERTY];
+  if (saved && typeof saved.media_manifest === "string") manifestWidget.value = saved.media_manifest;
+  const root = document.createElement("div");
+  root.className = "h3-media-board h3-dynamic-media-board";
+  root.tabIndex = 0;
+  const refreshOutputs = (state) => {
+    const imageCount = state.image.length;
+    const audioCount = state.audio.length;
+    node.outputs?.forEach((output, index) => {
+      const active = index < DYNAMIC_MEDIA_LIMIT
+        ? index < imageCount
+        : index - DYNAMIC_MEDIA_LIMIT < audioCount;
+      output.hidden = !active;
+      output.disabled = !active;
+      output.color = active ? undefined : "#59616a";
+      output.color_off = active ? undefined : "#59616a";
+    });
+    node.graph?.setDirtyCanvas?.(true, true);
+  };
+  const persist = (state) => {
+    manifestWidget.value = JSON.stringify(state);
+    node.properties = node.properties || {};
+    node.properties[DYNAMIC_MEDIA_SAVE_PROPERTY] = { media_manifest: manifestWidget.value };
+    node.graph?.setDirtyCanvas?.(true, true);
+  };
+  const render = () => {
+    const state = readDynamicMediaManifest(manifestWidget);
+    root.replaceChildren();
+    for (const kind of ["image", "audio"]) {
+      const title = document.createElement("div");
+      title.className = "mb-title";
+      title.textContent = `${kind === "image" ? "动态图片" : "动态音频"} · 已添加 ${state[kind].length}`;
+      root.appendChild(title);
+      const grid = document.createElement("div");
+      grid.className = "mb-dynamic-grid";
+      const visible = Math.min(DYNAMIC_MEDIA_LIMIT, state[kind].length + 1);
+      for (let index = 0; index < visible; index += 1) {
+        grid.appendChild(makeCard(kind, index, state[kind][index], (uploaded) => {
+          if (uploaded) state[kind][index] = uploaded;
+          else state[kind].splice(index, 1);
+          state[kind] = state[kind].filter(Boolean).slice(0, DYNAMIC_MEDIA_LIMIT);
+          persist(state); render();
+        }, { frameRoles: false }));
+      }
+      root.appendChild(grid);
+    }
+    refreshOutputs(state);
+    const imageRows = Math.ceil(Math.min(DYNAMIC_MEDIA_LIMIT, state.image.length + 1) / 3);
+    const audioRows = Math.ceil(Math.min(DYNAMIC_MEDIA_LIMIT, state.audio.length + 1) / 3);
+    const height = Math.max(292, 44 + imageRows * 139 + 36 + audioRows * 85);
+    node.setSize?.([930, height]);
+  };
+  node._dynamicMediaRender = render;
+  node._dynamicMediaRestore = (configured = null) => {
+    const backup = configured?.properties?.[DYNAMIC_MEDIA_SAVE_PROPERTY]
+      || node.properties?.[DYNAMIC_MEDIA_SAVE_PROPERTY];
+    if (backup && typeof backup.media_manifest === "string") manifestWidget.value = backup.media_manifest;
+    render();
+  };
+  const priorSerialize = node.onSerialize;
+  node.onSerialize = function (...args) {
+    const serialized = args[0];
+    if (serialized && typeof serialized === "object") {
+      serialized.properties = serialized.properties || {};
+      serialized.properties[DYNAMIC_MEDIA_SAVE_PROPERTY] = { media_manifest: manifestWidget.value || "{}" };
+    }
+    return priorSerialize?.apply(this, args);
+  };
+  root.addEventListener("wheel", (event) => {
+    const canvas = app.canvas?.canvas;
+    if (!canvas) return;
+    event.preventDefault(); event.stopPropagation();
+    canvas.dispatchEvent(new WheelEvent("wheel", {
+      bubbles: true, cancelable: true, clientX: event.clientX, clientY: event.clientY,
+      deltaX: event.deltaX, deltaY: event.deltaY, deltaMode: event.deltaMode,
+      ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, metaKey: event.metaKey,
+    }));
+  }, { passive: false });
+  render();
+  node.min_size = [930, 292];
+  node.min_width = 930;
+  node.max_width = 930;
+  node.addDOMWidget("dynamic_media_board_ui", "DYNAMIC_MEDIA_BOARD_UI", root, {
+    getValue: () => "dynamic-media-board",
+    getMinHeight: () => Math.max(240, node.size[1] - 48),
+    getHeight: () => Math.max(240, node.size[1] - 48),
+  });
+}
+
 function decorateUnpacker(node) {
   // Keep this routing node compact by default, but allow a deliberate working
   // range instead of locking it to a single (often overly tall) size.
@@ -1591,19 +1723,29 @@ function decorateMultiTimeGuide(node) {
 app.registerExtension({
   name: "h3.media_board",
   beforeRegisterNodeDef(nodeType, nodeData) {
-    if (nodeData?.name !== "H3MediaBoard") return;
+    if (nodeData?.name === "H3MediaBoard") {
+      const priorConfigure = nodeType.prototype.onConfigure;
+      nodeType.prototype.onConfigure = function (...args) {
+        const result = priorConfigure?.apply(this, args);
+        // Defer one frame: LiteGraph applies positional widget values during
+        // configure, and the deferred pass guarantees the DOM card grid sees
+        // the final restored values instead of its initial empty defaults.
+        requestAnimationFrame(() => restoreBoardWorkflowState(this, args[0]));
+        return result;
+      };
+      return;
+    }
+    if (nodeData?.name !== "DynamicMediaBoard") return;
     const priorConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function (...args) {
       const result = priorConfigure?.apply(this, args);
-      // Defer one frame: LiteGraph applies positional widget values during
-      // configure, and the deferred pass guarantees the DOM card grid sees
-      // the final restored values instead of its initial empty defaults.
-      requestAnimationFrame(() => restoreBoardWorkflowState(this, args[0]));
+      requestAnimationFrame(() => this._dynamicMediaRestore?.(args[0]));
       return result;
     };
   },
   nodeCreated(node) {
     if (node.comfyClass === "H3MediaBoard") createBoard(node);
+    if (node.comfyClass === "DynamicMediaBoard") createDynamicMediaBoard(node);
     if (node.comfyClass === "H3MediaBoardUnpack") decorateUnpacker(node);
     if (node.comfyClass === "H3ConditionLatentSwitch") decorateConditionLatentSwitch(node);
     if (node.comfyClass === "H3VideoModeControl") decorateVideoModeControl(node);
@@ -1613,6 +1755,9 @@ app.registerExtension({
   loadedGraphNode(node) {
     if (node.comfyClass === "H3MediaBoard") {
       requestAnimationFrame(() => restoreBoardWorkflowState(node));
+    }
+    if (node.comfyClass === "DynamicMediaBoard") {
+      requestAnimationFrame(() => node._dynamicMediaRestore?.());
     }
   },
 });

@@ -24,6 +24,7 @@ from server import PromptServer
 
 
 MAX_COUNTS = {"image": 9, "audio": 3, "video": 3}
+DYNAMIC_MEDIA_LIMIT = 64
 SAFE_KIND = set(MAX_COUNTS)
 UPLOAD_DIRNAME = "h3_media_board"
 ASPECT_RATIOS = {
@@ -83,6 +84,34 @@ def _clean_manifest(raw: str | dict[str, Any] | list[dict[str, Any]] | None) -> 
                     "name": str(item.get("name") or path.name),
                 }
             )
+    return result
+
+
+def _clean_dynamic_media_manifest(raw: str | dict[str, Any] | None) -> dict[str, list[dict[str, str]]]:
+    """Validate the dynamic board manifest without H3 first/last-frame gaps."""
+    result: dict[str, list[dict[str, str]]] = {"image": [], "audio": []}
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else (raw or {})
+    except json.JSONDecodeError:
+        return result
+    if not isinstance(parsed, dict):
+        return result
+    for kind in result:
+        items = parsed.get(kind, [])
+        if not isinstance(items, list):
+            continue
+        for item in items[:DYNAMIC_MEDIA_LIMIT]:
+            if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+                continue
+            try:
+                path = _safe_relative_path(item["path"])
+            except ValueError:
+                continue
+            if path.is_file():
+                result[kind].append({
+                    "path": item["path"].replace("\\", "/"),
+                    "name": str(item.get("name") or path.name),
+                })
     return result
 
 
@@ -466,8 +495,6 @@ class H3SecondPassPreparation:
         required = {
             "media_board": ("H3_MEDIA_BOARD", {"tooltip": "接 H3 Media Board 或模式控制节点的 media_board 输出。"}),
             "clip": ("CLIP",),
-            "vae": ("VAE", {"tooltip": "H3 视频 VAE。"}),
-            "audio_vae": ("VAE", {"tooltip": "H3 音频 VAE。"}),
             "upscaled_latent": ("LATENT", {"tooltip": "接 LTXVConcatAVLatent 的 latent 输出。"}),
             "use_image_text": (
                 "BOOLEAN",
@@ -479,6 +506,11 @@ class H3SecondPassPreparation:
             ),
         }
         optional = {
+            # Keep the original local ports for existing workflows.  When the
+            # guide sync wire is connected below, its VAE pair takes priority.
+            "vae": ("VAE", {"tooltip": "H3 视频 VAE；接入一采引导同步后由同步线自动提供。"}),
+            "audio_vae": ("VAE", {"tooltip": "H3 音频 VAE；接入一采引导同步后由同步线自动提供。"}),
+            "guide_sync": ("H3_GUIDE_SYNC", {"label": "一采引导同步", "tooltip": "接 H3 多时间点引导帧的二采同步输出；同步 VAE、音频 VAE、全部引导图片/音频和时间点。"}),
             "external_switch": ("BOOLEAN", {"forceInput": True, "label": "自动模式开关", "tooltip": "接 H3 生视频模式控制的模式开关；接入后自动跟随素材类型。"}),
             "injection_image": ("IMAGE", {"label": "第 1 组图片 / 帧串", "tooltip": "第 1 组：可接单张图片、视频帧批次或多帧图片序列。"}),
             "injection_audio": ("AUDIO", {"label": "第 1 组音频", "tooltip": "第 1 组：可选，从该组起始帧开始注入音频。"}),
@@ -536,11 +568,12 @@ class H3SecondPassPreparation:
         self,
         media_board: dict[str, Any],
         clip: Any,
-        vae: Any,
-        audio_vae: Any,
         upscaled_latent: dict[str, Any],
         use_image_text: bool,
         frame_idx: int,
+        vae: Any = None,
+        audio_vae: Any = None,
+        guide_sync: dict[str, Any] | None = None,
         external_switch: bool | None = None,
         injection_image: torch.Tensor | None = None,
         injection_audio: dict[str, Any] | None = None,
@@ -556,6 +589,11 @@ class H3SecondPassPreparation:
             raise RuntimeError("未找到 ComfyUI 原生 MiniMax H3 节点；请更新 ComfyUI 后再使用 H3 二采准备。") from error
 
         manifest = _clean_manifest(media_board)
+        if isinstance(guide_sync, dict):
+            vae = guide_sync.get("vae") or vae
+            audio_vae = guide_sync.get("audio_vae") or audio_vae
+        if vae is None:
+            raise ValueError("H3 二采准备需要视频 VAE；请连接视频 VAE，或接入 H3 多时间点引导帧的二采同步输出。")
         width, height, frames = self._target_shape(upscaled_latent)
         prompt = str(media_board.get("prompt", "")) if isinstance(media_board, dict) else ""
         image_text_mode = self._choose_image_text(manifest, bool(use_image_text), external_switch)
@@ -595,13 +633,20 @@ class H3SecondPassPreparation:
                 ref_images, ref_videos, ref_video_audios, ref_audios,
             )[0]
 
-        guide_groups = [(frame_idx, injection_image, injection_audio)]
-        for group_index in range(2, self.MAX_GUIDE_GROUPS + 1):
-            guide_groups.append((
-                additional_guides.get(f"frame_idx_{group_index}", 0),
-                additional_guides.get(f"injection_image_{group_index}"),
-                additional_guides.get(f"injection_audio_{group_index}"),
-            ))
+        synced_groups = guide_sync.get("groups") if isinstance(guide_sync, dict) else None
+        if isinstance(synced_groups, list):
+            guide_groups = [
+                (group.get("frame_idx", 0), group.get("image"), group.get("audio"))
+                for group in synced_groups if isinstance(group, dict)
+            ]
+        else:
+            guide_groups = [(frame_idx, injection_image, injection_audio)]
+            for group_index in range(2, self.MAX_GUIDE_GROUPS + 1):
+                guide_groups.append((
+                    additional_guides.get(f"frame_idx_{group_index}", 0),
+                    additional_guides.get(f"injection_image_{group_index}"),
+                    additional_guides.get(f"injection_audio_{group_index}"),
+                ))
         # AddGuide appends a keyframe to the conditioning. Repeating it here
         # lets one compact node place several stills, clips or audio cues at
         # independent timeline positions for the second sampling pass.
@@ -657,8 +702,8 @@ class H3MultiTimeGuide:
             )
         return {"required": required, "optional": optional}
 
-    RETURN_TYPES = ("CONDITIONING",)
-    RETURN_NAMES = ("positive",)
+    RETURN_TYPES = ("CONDITIONING", "H3_GUIDE_SYNC")
+    RETURN_NAMES = ("positive", "二采同步")
     FUNCTION = "guide"
     CATEGORY = "H3 / Media"
 
@@ -692,7 +737,53 @@ class H3MultiTimeGuide:
                 positive, latent, int(guide_frame_idx),
                 vae=vae, audio_vae=audio_vae, image=image, audio=audio,
             )[0]
-        return (positive,)
+        # The bundle makes the second pass reuse exactly the same guide
+        # assets, VAE pair and timeline positions without duplicating wires.
+        # It remains a separate output so existing workflows using `positive`
+        # continue to work unchanged.
+        guide_sync = {
+            "vae": vae,
+            "audio_vae": audio_vae,
+            "groups": [
+                {"frame_idx": int(guide_frame_idx), "image": image, "audio": audio}
+                for guide_frame_idx, image, audio in guide_groups
+                if image is not None or audio is not None
+            ],
+        }
+        return (positive, guide_sync)
+
+
+class DynamicMediaBoard:
+    """A growing image/audio upload board with one output per populated asset.
+
+    ComfyUI needs output types to be declared ahead of time, so the node owns
+    a generous fixed backend capacity.  The frontend hides all unused ports
+    and reveals each port exactly when its matching card receives an upload.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "media_manifest": ("STRING", {"default": "{}", "multiline": False}),
+            },
+        }
+
+    RETURN_TYPES = tuple(["IMAGE"] * DYNAMIC_MEDIA_LIMIT + ["AUDIO"] * DYNAMIC_MEDIA_LIMIT)
+    RETURN_NAMES = tuple(
+        [f"图片_{index}" for index in range(1, DYNAMIC_MEDIA_LIMIT + 1)]
+        + [f"音频_{index}" for index in range(1, DYNAMIC_MEDIA_LIMIT + 1)]
+    )
+    FUNCTION = "collect"
+    CATEGORY = "H3 / Media"
+
+    def collect(self, media_manifest: str):
+        manifest = _clean_dynamic_media_manifest(media_manifest)
+        images = [_load_image(item) for item in manifest["image"]]
+        audios = [_load_audio(item) for item in manifest["audio"]]
+        images += [None] * (DYNAMIC_MEDIA_LIMIT - len(images))
+        audios += [None] * (DYNAMIC_MEDIA_LIMIT - len(audios))
+        return tuple(images + audios)
 
 
 NODE_CLASS_MAPPINGS = {
@@ -702,6 +793,7 @@ NODE_CLASS_MAPPINGS = {
     "H3VideoModeControl": H3VideoModeControl,
     "H3SecondPassPreparation": H3SecondPassPreparation,
     "H3MultiTimeGuide": H3MultiTimeGuide,
+    "DynamicMediaBoard": DynamicMediaBoard,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -711,4 +803,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3VideoModeControl": "H3 生视频模式控制",
     "H3SecondPassPreparation": "H3 二采准备（高分条件 / 注入帧）",
     "H3MultiTimeGuide": "H3 多时间点引导帧",
+    "DynamicMediaBoard": "动态素材板（图片 / 音频）",
 }
