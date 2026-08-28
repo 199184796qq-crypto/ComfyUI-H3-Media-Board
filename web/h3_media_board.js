@@ -60,6 +60,16 @@ function injectStyle() {
     .h3-media-board .mb-image-grid { display:grid; grid-template-columns:repeat(3, 294px); gap:7px; }
     .h3-media-board .mb-card { position:relative; box-sizing:border-box; width:294px; flex:0 0 294px; border:1px dashed #687078; border-radius:8px; background:#202428; overflow:hidden; cursor:pointer; }
     .h3-media-board .mb-card.drag-over { border:2px solid #69ee7a; background:#243129; box-shadow:inset 0 0 0 1px #69ee7a66; }
+    .h3-media-board .mb-card.uploading { cursor:progress; border-color:#a987ff; }
+    .h3-media-board .mb-upload-overlay { position:absolute; z-index:8; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; padding:12px; color:#f3edff; text-align:center; background:#171321e8; cursor:progress; }
+    .h3-media-board .mb-upload-title { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:800; font-size:12px; }
+    .h3-media-board .mb-upload-detail { color:#cbbcff; font-size:11px; font-variant-numeric:tabular-nums; }
+    .h3-media-board .mb-upload-track { width:min(210px, 88%); height:7px; overflow:hidden; border:1px solid #75619e; border-radius:99px; background:#0f0d16; }
+    .h3-media-board .mb-upload-fill { width:var(--upload-progress, 0%); height:100%; border-radius:inherit; background:linear-gradient(90deg,#9c7bff,#d4c2ff); transition:width .16s linear; }
+    .h3-media-board .mb-upload-overlay.indeterminate .mb-upload-fill { width:38%; animation:mb-upload-pulse 1s ease-in-out infinite alternate; }
+    .h3-media-board .mb-upload-overlay.error { color:#ffc1c8; background:#28171be8; cursor:pointer; }
+    .h3-media-board .mb-upload-overlay.error .mb-upload-track { display:none; }
+    @keyframes mb-upload-pulse { from { transform:translateX(-55%); } to { transform:translateX(205%); } }
     .h3-media-board .mb-image { height:132px; } .h3-media-board .mb-audio { height:78px; } .h3-media-board .mb-video { height:116px; }
     .h3-media-board .mb-card.empty { display:flex; align-items:center; justify-content:center; color:#9aa2a9; }
     .h3-media-board .mb-card:not(.empty) { border-style:solid; border-color:#485057; }
@@ -160,23 +170,39 @@ function hasMediaTransfer(event) {
   return Array.from(event.dataTransfer?.types || []).includes("Files");
 }
 
-async function uploadFile(kind, file) {
+async function uploadFile(kind, file, onProgress) {
   if (!file || kindForFile(file) !== kind) return null;
   const form = new FormData();
   form.set("kind", kind);
   form.set("file", file);
-  const response = await fetch("/h3_media_board/upload", { method: "POST", body: form });
-  return response.ok ? await response.json() : null;
+  return await new Promise((resolve) => {
+    const request = new XMLHttpRequest();
+    const report = (percent, phase = "上传中") => onProgress?.({ percent, phase });
+    request.open("POST", "/h3_media_board/upload", true);
+    request.upload.onloadstart = () => report(0);
+    request.upload.onprogress = (event) => {
+      report(event.lengthComputable && event.total > 0 ? Math.round(event.loaded / event.total * 100) : null);
+    };
+    // Browser-to-server transfer is done; the server may still be writing or
+    // validating a large media file, so keep the progress view visible.
+    request.upload.onload = () => report(100, "正在保存文件");
+    request.onload = () => {
+      if (request.status < 200 || request.status >= 300) return resolve(null);
+      try { resolve(JSON.parse(request.responseText)); } catch (_) { resolve(null); }
+    };
+    request.onerror = request.onabort = request.ontimeout = () => resolve(null);
+    try { request.send(form); } catch (_) { resolve(null); }
+  });
 }
 
-async function chooseAndUpload(kind) {
+async function chooseFile(kind) {
   const picker = document.createElement("input");
   picker.type = "file";
   picker.accept = ACCEPTS[kind];
   return await new Promise((resolve) => {
-    picker.onchange = async () => {
+    picker.onchange = () => {
       if (!picker.files?.[0]) return resolve(null);
-      resolve(await uploadFile(kind, picker.files[0]));
+      resolve(picker.files[0]);
     };
     picker.click();
   });
@@ -248,12 +274,41 @@ function makeCard(kind, index, asset, update) {
   card.className = `mb-card mb-${kind}${asset ? "" : " empty"}`;
   card.tabIndex = 0;
   const badge = document.createElement("span"); badge.className = "mb-index"; badge.textContent = String(index + 1); card.appendChild(badge);
-  const select = async () => { const uploaded = await chooseAndUpload(kind); if (uploaded) update(uploaded); };
+  card._h3HasAsset = Boolean(asset);
+  let uploading = false;
+  const showUpload = (file) => {
+    const overlay = document.createElement("div"); overlay.className = "mb-upload-overlay";
+    const title = document.createElement("div"); title.className = "mb-upload-title"; title.textContent = file.name || "正在上传媒体";
+    const detail = document.createElement("div"); detail.className = "mb-upload-detail";
+    const track = document.createElement("div"); track.className = "mb-upload-track";
+    const fill = document.createElement("div"); fill.className = "mb-upload-fill"; track.appendChild(fill);
+    overlay.append(title, detail, track); card.classList.add("uploading"); card.appendChild(overlay);
+    const paint = ({ percent, phase = "上传中" } = {}) => {
+      const known = Number.isFinite(percent);
+      overlay.classList.toggle("indeterminate", !known);
+      fill.style.setProperty("--upload-progress", known ? `${Math.max(0, Math.min(100, percent))}%` : "38%");
+      detail.textContent = known ? `${phase} · ${Math.round(percent)}%` : `${phase}…`;
+    };
+    paint({ percent: 0 });
+    return { overlay, paint };
+  };
+  const runUpload = async (file) => {
+    if (uploading || !file) return;
+    uploading = true;
+    const progress = showUpload(file);
+    const uploaded = await uploadFile(kind, file, progress.paint);
+    uploading = false;
+    if (uploaded) { update(uploaded); return; }
+    card.classList.remove("uploading");
+    progress.overlay.className = "mb-upload-overlay error";
+    progress.overlay.querySelector(".mb-upload-detail").textContent = "上传失败，点击后重试";
+    progress.overlay.onclick = (event) => { stop(event); progress.overlay.remove(); };
+  };
+  const select = async () => { if (uploading) return; const file = await chooseFile(kind); if (file) await runUpload(file); };
   const receiveFiles = async (files) => {
     const file = Array.from(files || []).find((candidate) => kindForFile(candidate) === kind);
     if (!file) return;
-    const uploaded = await uploadFile(kind, file);
-    if (uploaded) update(uploaded);
+    await runUpload(file);
   };
   // Exposed for the page-level capture handler: the Comfy canvas may receive
   // Windows Explorer drops before this DOM widget gets a normal drop event.
@@ -550,18 +605,16 @@ function createBoard(node) {
       root.appendChild(row);
     }
     // Dropping on the node rather than a specific card fills the next free
-    // position for each detected media type.  Pasting behaves the same way.
+    // position for each detected media type.  Route through that card so its
+    // upload progress is visible for drag-and-drop and paste as well.
     const appendFiles = async (files) => {
-      let changed = false;
       for (const file of Array.from(files || [])) {
         const kind = kindForFile(file);
         if (!kind) continue;
-        compactMedia(state, kind);
-        if (state[kind].length >= LIMITS[kind]) continue;
-        const uploaded = await uploadFile(kind, file);
-        if (uploaded) { state[kind].push(uploaded); changed = true; }
+        const target = Array.from(root.querySelectorAll(".mb-card"))
+          .find((card) => card._h3MediaKind === kind && !card._h3HasAsset && !card.classList.contains("uploading"));
+        if (target) await target._h3ReceiveFiles?.([file]);
       }
-      if (changed) { persist(state); render(); }
     };
     root._h3AppendFiles = appendFiles;
     root.ondragover = (event) => {
