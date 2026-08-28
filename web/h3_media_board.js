@@ -70,6 +70,18 @@ function injectStyle() {
     .h3-media-board .mb-upload-overlay.error { color:#ffc1c8; background:#28171be8; cursor:pointer; }
     .h3-media-board .mb-upload-overlay.error .mb-upload-track { display:none; }
     @keyframes mb-upload-pulse { from { transform:translateX(-55%); } to { transform:translateX(205%); } }
+    .h3-mode-control { box-sizing:border-box; display:flex; flex-direction:column; gap:9px; width:100%; height:100%; min-height:108px; padding:11px; color:#e7edf3; background:linear-gradient(145deg,#1d2a32,#151c22); border:1px solid #45616d; border-radius:9px; font:12px system-ui,sans-serif; }
+    .h3-mode-control .h3-mode-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+    .h3-mode-control .h3-mode-title { color:#e8f6fb; font-size:13px; font-weight:800; }
+    .h3-mode-control .h3-mode-caption { color:#8ca8b4; font-size:10px; white-space:nowrap; }
+    .h3-mode-control .h3-mode-options { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .h3-mode-control .h3-mode-option { min-height:46px; padding:7px 8px; border:1px solid #40545e; border-radius:7px; color:#b9c6cc; background:#131a20; text-align:left; cursor:pointer; transition:background .14s,border-color .14s,box-shadow .14s; }
+    .h3-mode-control .h3-mode-option:hover { border-color:#75cce4; }
+    .h3-mode-control .h3-mode-option.active { border-color:#65d9e9; color:#ebfbff; background:linear-gradient(135deg,#174e5a,#153740); box-shadow:inset 3px 0 #6be7f0,0 0 0 1px #63dce522; }
+    .h3-mode-control .h3-mode-option strong { display:block; font-size:12px; }
+    .h3-mode-control .h3-mode-option small { display:block; margin-top:3px; color:#91a7b0; font-size:10px; }
+    .h3-mode-control .h3-mode-option.active small { color:#bdeff3; }
+    .h3-mode-control .h3-mode-status { padding:5px 7px; border-left:3px solid #69e6ee; border-radius:3px; color:#bfeff2; background:#11252c; font-size:10px; }
     .h3-media-board .mb-image { height:132px; } .h3-media-board .mb-audio { height:78px; } .h3-media-board .mb-video { height:116px; }
     .h3-media-board .mb-card.empty { display:flex; align-items:center; justify-content:center; color:#9aa2a9; }
     .h3-media-board .mb-card:not(.empty) { border-style:solid; border-color:#485057; }
@@ -685,8 +697,27 @@ function decorateUnpacker(node) {
     const link = node.inputs?.[0]?.link;
     // getInputNode works in both the legacy LiteGraph canvas and Nodes 2.0.
     // The graph.links fallback covers older ComfyUI builds.
-    const source = node.getInputNode?.(0)
+    const directSource = node.getInputNode?.(0)
       || (link != null ? node.graph?.getNodeById(node.graph.links?.[link]?.origin_id) : null);
+    // ``H3VideoModeControl`` forwards H3_MEDIA_BOARD unchanged.  Follow its
+    // media_board input (and any future pass-through nodes) back to the real
+    // board so the count panel still reacts after an intermediate node.
+    const findOriginalBoard = (start) => {
+      const visited = new Set(); let current = start;
+      while (current && !visited.has(current.id)) {
+        visited.add(current.id);
+        if (current.comfyClass === "H3MediaBoard") return current;
+        const inputIndex = current.inputs?.findIndex((input) => input.name === "media_board") ?? -1;
+        if (inputIndex < 0) return current;
+        const inputLink = current.inputs?.[inputIndex]?.link;
+        const next = current.getInputNode?.(inputIndex)
+          || (inputLink != null ? current.graph?.getNodeById(current.graph.links?.[inputLink]?.origin_id) : null);
+        if (!next) return current;
+        current = next;
+      }
+      return start;
+    };
+    const source = findOriginalBoard(directSource);
     const widget = source?.widgets?.find((w) => w.name === "media_manifest");
     const state = widget ? readManifest(widget) : { image: [], audio: [], video: [] };
     const valueOf = (name, fallback) => source?.widgets?.find((w) => w.name === name)?.value ?? fallback;
@@ -819,10 +850,149 @@ function decorateUnpacker(node) {
   };
 }
 
+function decorateVideoModeControl(node) {
+  if (node._h3ModeControlCreated) return;
+  injectStyle();
+  // Existing workflow nodes keep the input-slot list they were created with.
+  // Add the new pass-through port explicitly so pre-update controller nodes
+  // gain it too, without asking the user to delete and recreate the node.
+  if (!node.inputs?.some((input) => input.name === "media_board")) {
+    node.addInput?.("media_board", "H3_MEDIA_BOARD");
+    node.graph?.setDirtyCanvas(true, true);
+  }
+  const widget = node.widgets?.find((item) => item.name === "use_image_text");
+  if (!widget) {
+    const attempts = node._h3ModeControlAttempts || 0;
+    if (attempts < 8 && !node._h3ModeControlPending) {
+      node._h3ModeControlAttempts = attempts + 1;
+      node._h3ModeControlPending = true;
+      setTimeout(() => { node._h3ModeControlPending = false; decorateVideoModeControl(node); }, 80 * (attempts + 1));
+    }
+    return;
+  }
+  node._h3ModeControlCreated = true;
+  // Keep a normal serializable widget for workflow JSON, but render its
+  // single Boolean value as two clear H3 video-mode choices.
+  widget.hidden = true;
+  widget.options = widget.options || {}; widget.options.hidden = true;
+  if (widget._state) widget._state.hidden = true;
+  widget.serialize = true; widget.serializeValue = () => widget.value;
+  if (widget.element) widget.element.style.display = "none";
+  widget.computeSize = () => [0, -4]; widget.draw = () => {};
+
+  const root = document.createElement("div"); root.className = "h3-mode-control";
+  const head = document.createElement("div"); head.className = "h3-mode-head";
+  const title = document.createElement("span"); title.className = "h3-mode-title"; title.textContent = "H3 生视频模式";
+  const caption = document.createElement("span"); caption.className = "h3-mode-caption"; caption.textContent = "控制条件 / Latent 切换";
+  head.append(title, caption);
+  const options = document.createElement("div"); options.className = "h3-mode-options";
+  const imageText = document.createElement("button"); imageText.type = "button"; imageText.className = "h3-mode-option";
+  imageText.innerHTML = "<strong>图文 / 图生</strong><small>输出图文条件与 Latent</small>";
+  const multiReference = document.createElement("button"); multiReference.type = "button"; multiReference.className = "h3-mode-option";
+  multiReference.innerHTML = "<strong>多参参考</strong><small>输出多参条件与 Latent</small>";
+  options.append(imageText, multiReference);
+  const status = document.createElement("div"); status.className = "h3-mode-status";
+  const paint = () => {
+    const isImageText = Boolean(widget.value);
+    imageText.classList.toggle("active", isImageText);
+    multiReference.classList.toggle("active", !isImageText);
+    status.textContent = `当前输出：${isImageText ? "图文 / 图生" : "多参参考"} → 接到 H3 条件与 Latent 切换的 external_switch`;
+  };
+  const choose = (value) => {
+    widget.value = value; widget.callback?.(value);
+    node.graph?.setDirtyCanvas(true, true); paint();
+  };
+  imageText.onclick = (event) => { stop(event); choose(true); };
+  multiReference.onclick = (event) => { stop(event); choose(false); };
+  root.append(head, options, status); root.onpointerdown = (event) => event.stopPropagation();
+  // This is a control, not a workspace panel.  Keep it compact and prevent
+  // saved workflows or the resize handle from stretching its two-mode layout.
+  const fixedSize = [430, 180];
+  node.resizable = false;
+  node.min_size = fixedSize; node.max_size = fixedSize;
+  node.min_width = fixedSize[0]; node.max_width = fixedSize[0];
+  node.min_height = fixedSize[1]; node.max_height = fixedSize[1];
+  const resizeBeforeLock = node.onResize;
+  node.onResize = function (size) {
+    size[0] = fixedSize[0]; size[1] = fixedSize[1];
+    resizeBeforeLock?.call(this, size);
+  };
+  node.addDOMWidget("h3_video_mode_ui", "H3_VIDEO_MODE_UI", root, {
+    getValue: () => Boolean(widget.value),
+    getMinHeight: () => 108,
+    getHeight: () => 108,
+  });
+  node.setSize?.(fixedSize);
+  paint();
+}
+
+function removeLegacyConditionBoardPort(node) {
+  // A short-lived schema mistake added media_board to this routing node.
+  // Clean old canvas instances as well as newly loaded workflows; the route
+  // node only needs the two CONDITIONING/LATENT pairs and its Boolean control.
+  const index = node.inputs?.findIndex((input) => input.name === "media_board") ?? -1;
+  if (index >= 0) {
+    node.removeInput?.(index);
+    node.graph?.setDirtyCanvas(true, true);
+  }
+}
+
+function decorateConditionLatentSwitch(node) {
+  if (node._h3ConditionSwitchDecorated) return;
+  removeLegacyConditionBoardPort(node);
+  const modeWidget = node.widgets?.find((widget) => widget.name === "use_image_text");
+  if (!modeWidget) {
+    const attempts = node._h3ConditionSwitchAttempts || 0;
+    if (attempts < 8 && !node._h3ConditionSwitchPending) {
+      node._h3ConditionSwitchAttempts = attempts + 1;
+      node._h3ConditionSwitchPending = true;
+      setTimeout(() => { node._h3ConditionSwitchPending = false; decorateConditionLatentSwitch(node); }, 80 * (attempts + 1));
+    }
+    return;
+  }
+  node._h3ConditionSwitchDecorated = true;
+  const inputSource = (inputIndex) => {
+    const link = node.inputs?.[inputIndex]?.link;
+    return node.getInputNode?.(inputIndex)
+      || (link != null ? node.graph?.getNodeById(node.graph.links?.[link]?.origin_id) : null);
+  };
+  const syncExternalMode = () => {
+    const externalIndex = node.inputs?.findIndex((input) => input.name === "external_switch") ?? -1;
+    const source = externalIndex >= 0 ? inputSource(externalIndex) : null;
+    const sourceWidget = source?.comfyClass === "H3VideoModeControl"
+      ? source.widgets?.find((widget) => widget.name === "use_image_text")
+      : null;
+    if (sourceWidget) {
+      if (!node._h3ExternalModeActive) node._h3LocalModeBeforeExternal = Boolean(modeWidget.value);
+      node._h3ExternalModeActive = true;
+      const useImageText = Boolean(sourceWidget.value);
+      const nextLabel = `外部控制 · ${useImageText ? "图文 / 图生" : "多参参考"}`;
+      const changed = modeWidget.value !== useImageText || modeWidget.label !== nextLabel;
+      modeWidget.value = useImageText;
+      modeWidget.label = nextLabel;
+      if (changed) node.graph?.setDirtyCanvas(true, true);
+      return;
+    }
+    if (node._h3ExternalModeActive) {
+      modeWidget.value = node._h3LocalModeBeforeExternal;
+      node._h3ExternalModeActive = false;
+      node.graph?.setDirtyCanvas(true, true);
+    }
+    if (modeWidget.label !== undefined) modeWidget.label = undefined;
+  };
+  const priorConnections = node.onConnectionsChange;
+  node.onConnectionsChange = function (...args) { priorConnections?.apply(this, args); syncExternalMode(); };
+  const priorDraw = node.onDrawForeground;
+  node.onDrawForeground = function (ctx) { priorDraw?.call(this, ctx); syncExternalMode(); };
+  syncExternalMode();
+}
+
 app.registerExtension({
   name: "h3.media_board",
   nodeCreated(node) {
     if (node.comfyClass === "H3MediaBoard") createBoard(node);
     if (node.comfyClass === "H3MediaBoardUnpack") decorateUnpacker(node);
+    if (node.comfyClass === "H3ConditionLatentSwitch") decorateConditionLatentSwitch(node);
+    if (node.comfyClass === "H3VideoModeControl") decorateVideoModeControl(node);
   },
 });

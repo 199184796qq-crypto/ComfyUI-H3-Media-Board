@@ -324,12 +324,119 @@ class H3MediaBoardUnpack:
         ])
 
 
+class H3ConditionLatentSwitch:
+    """Route either H3 image/text or multi-reference condition and latent together.
+
+    Both values are selected as one pair, preventing the common mistake of
+    pairing the conditioning from one H3 preparation node with the latent from
+    the other.  ``external_switch`` overrides the local toggle when connected.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "use_image_text": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "label_on": "图文输入（开）",
+                        "label_off": "多参输入（关）",
+                        "tooltip": "开：输出图文/图生分支；关：输出多参参考分支。",
+                    },
+                ),
+            },
+            "optional": {
+                # Lazy ports mean ComfyUI asks only the selected H3 branch for
+                # its values.  The other H3 condition/latent preparation node
+                # and its upstream media unpacker are skipped completely.
+                "image_text_conditioning": ("CONDITIONING", {"lazy": True, "tooltip": "接 H3 图文/图生节点的正向条件。"}),
+                "image_text_latent": ("LATENT", {"lazy": True, "tooltip": "接 H3 图文/图生节点的 Latent。"}),
+                "multi_reference_conditioning": ("CONDITIONING", {"lazy": True, "tooltip": "接 H3 多参参考节点的正向条件。"}),
+                "multi_reference_latent": ("LATENT", {"lazy": True, "tooltip": "接 H3 多参参考节点的 Latent。"}),
+                # A separate socket keeps the local toggle available while
+                # permitting workflow logic (Boolean/Compare nodes) to drive it.
+                "external_switch": ("BOOLEAN", {"forceInput": True, "tooltip": "外部开关；接入后优先于本节点开关。"}),
+            },
+        }
+
+    RETURN_TYPES = ("CONDITIONING", "LATENT")
+    RETURN_NAMES = ("正向条件", "latent")
+    FUNCTION = "route"
+    CATEGORY = "H3 / Media"
+
+    def check_lazy_status(
+        self,
+        use_image_text: bool,
+        external_switch: bool | None = None,
+        **_kwargs,
+    ) -> list[str]:
+        """Request only one complete condition/latent pair from upstream."""
+        use_image_text = bool(external_switch) if external_switch is not None else bool(use_image_text)
+        if use_image_text:
+            return ["image_text_conditioning", "image_text_latent"]
+        return ["multi_reference_conditioning", "multi_reference_latent"]
+
+    def route(
+        self,
+        use_image_text: bool,
+        image_text_conditioning: Any = None,
+        image_text_latent: Any = None,
+        multi_reference_conditioning: Any = None,
+        multi_reference_latent: Any = None,
+        external_switch: bool | None = None,
+    ):
+        use_image_text = bool(external_switch) if external_switch is not None else bool(use_image_text)
+        if use_image_text:
+            if image_text_conditioning is None or image_text_latent is None:
+                raise ValueError("请连接图文/图生分支的正向条件和 Latent。")
+            return (image_text_conditioning, image_text_latent)
+        if multi_reference_conditioning is None or multi_reference_latent is None:
+            raise ValueError("请连接多参参考分支的正向条件和 Latent。")
+        return (multi_reference_conditioning, multi_reference_latent)
+
+
+class H3VideoModeControl:
+    """A small, explicit control node for :class:`H3ConditionLatentSwitch`."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "media_board": ("H3_MEDIA_BOARD", {"tooltip": "接 H3 Media Board 的 media_board 输出，并原样转发。"}),
+                "use_image_text": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "label_on": "图文 / 图生",
+                        "label_off": "多参参考",
+                        "tooltip": "开：图文/图生模式；关：多参参考生视频模式。",
+                    },
+                ),
+            },
+        }
+
+    RETURN_TYPES = ("BOOLEAN", "H3_MEDIA_BOARD")
+    RETURN_NAMES = ("模式开关", "media_board")
+    FUNCTION = "control"
+    CATEGORY = "H3 / Media"
+
+    def control(self, media_board: dict[str, Any], use_image_text: bool):
+        # Passing the board through keeps one clean wire path: Media Board →
+        # Mode Control → Media Board Outputs, alongside the Boolean control.
+        return (bool(use_image_text), media_board)
+
+
 NODE_CLASS_MAPPINGS = {
     "H3MediaBoard": H3MediaBoard,
     "H3MediaBoardUnpack": H3MediaBoardUnpack,
+    "H3ConditionLatentSwitch": H3ConditionLatentSwitch,
+    "H3VideoModeControl": H3VideoModeControl,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "H3MediaBoard": "H3 Media Board (9 Image / 3 Audio / 3 Video)",
     "H3MediaBoardUnpack": "H3 Media Board Outputs",
+    "H3ConditionLatentSwitch": "H3 条件与 Latent 切换",
+    "H3VideoModeControl": "H3 生视频模式控制",
 }
