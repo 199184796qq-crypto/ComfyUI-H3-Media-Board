@@ -798,10 +798,15 @@ function createBoard(node) {
       altKey: event.altKey, metaKey: event.metaKey,
     }));
   }, { passive: false });
-  // Middle-button dragging is the canvas pan gesture.  Relay it from the DOM
-  // board to LiteGraph as well, including movement after the cursor leaves the
-  // node, so panning feels exactly like dragging an empty canvas area.
+  // Middle-button dragging is the canvas pan gesture.  Move DragAndScale
+  // directly because synthetic mouse events are ignored by some ComfyUI
+  // frontends; use the event relay only as a compatibility fallback.
   let middlePanning = false;
+  let panStart = null;
+  const dragAndScale = () => {
+    const offset = app.canvas?.ds?.offset;
+    return offset && Number.isFinite(Number(offset[0])) && Number.isFinite(Number(offset[1])) ? app.canvas.ds : null;
+  };
   const relayCanvasMouse = (type, event, buttons) => {
     const canvasElement = app.canvas?.canvas;
     if (!canvasElement) return;
@@ -812,22 +817,34 @@ function createBoard(node) {
     }));
   };
   const stopMiddlePan = () => {
-    middlePanning = false; root.style.cursor = "";
+    middlePanning = false; panStart = null; root.style.cursor = "";
     document.removeEventListener("mousemove", relayMiddleMove, true);
     document.removeEventListener("mouseup", relayMiddleUp, true);
   };
   const relayMiddleMove = (event) => {
     if (!middlePanning || !event.isTrusted) return;
-    event.preventDefault(); event.stopImmediatePropagation(); relayCanvasMouse("mousemove", event, 4);
+    event.preventDefault(); event.stopImmediatePropagation();
+    const ds = dragAndScale();
+    if (ds && panStart) {
+      ds.offset[0] = panStart.offsetX + event.clientX - panStart.clientX;
+      ds.offset[1] = panStart.offsetY + event.clientY - panStart.clientY;
+      app.canvas?.setDirty?.(true, true);
+      app.canvas?.setDirtyCanvas?.(true, true);
+      app.canvas?.draw?.(true, true);
+    } else relayCanvasMouse("mousemove", event, 4);
   };
   const relayMiddleUp = (event) => {
     if (!middlePanning || !event.isTrusted) return;
-    event.preventDefault(); event.stopImmediatePropagation(); relayCanvasMouse("mouseup", event, 0); stopMiddlePan();
+    event.preventDefault(); event.stopImmediatePropagation();
+    if (!dragAndScale()) relayCanvasMouse("mouseup", event, 0);
+    stopMiddlePan();
   };
   root.addEventListener("mousedown", (event) => {
     if (event.button !== 1) return;
     event.preventDefault(); event.stopPropagation(); middlePanning = true; root.style.cursor = "grabbing";
-    relayCanvasMouse("mousedown", event, 4);
+    const ds = dragAndScale();
+    if (ds) panStart = { clientX: event.clientX, clientY: event.clientY, offsetX: Number(ds.offset[0]), offsetY: Number(ds.offset[1]) };
+    else relayCanvasMouse("mousedown", event, 4);
     document.addEventListener("mousemove", relayMiddleMove, true);
     document.addEventListener("mouseup", relayMiddleUp, true);
   }, true);
