@@ -500,6 +500,13 @@ function makePromptEditor(promptWidget, node, getState, saveBackup) {
 
   let mention = null;
   let activeIndex = 0;
+  let menuPointerDown = false;
+  menu.addEventListener("pointerdown", () => { menuPointerDown = true; });
+  menu.addEventListener("pointerup", () => {
+    menuPointerDown = false;
+    if (document.activeElement !== editor && !menu.matches(":hover")) hideMenu();
+  });
+  menu.addEventListener("pointercancel", () => { menuPointerDown = false; });
   // innerText preserves the line breaks users create while writing prompts.
   const currentText = () => editor.innerText || "";
   const saveSelectionOffset = () => {
@@ -687,7 +694,11 @@ function makePromptEditor(promptWidget, node, getState, saveBackup) {
     if ((event.key === "Enter" || event.key === "Tab") && options[activeIndex]) { event.preventDefault(); pick(options[activeIndex]); }
   };
   editor.onfocus = () => updateMention();
-  editor.onblur = () => setTimeout(hideMenu, 120);
+  // Dragging the menu's own scrollbar can move focus away from the editor.
+  // Do not mistake that normal interaction for a request to close the picker.
+  editor.onblur = () => setTimeout(() => {
+    if (!menuPointerDown && !menu.matches(":hover")) hideMenu();
+  }, 150);
   shell.refreshReferences = () => {
     const caret = document.activeElement === editor ? saveSelectionOffset() : null;
     renderText(currentText(), caret); updateMention();
@@ -761,6 +772,9 @@ function createBoard(node) {
   // the wheel event.  Relay it to the real canvas and keep zoom behaviour the
   // same whether the pointer is on a card, the prompt, or a settings control.
   root.addEventListener("wheel", (event) => {
+    // The @ picker is deliberately the exception: it has its own fixed-height
+    // list, so wheel input over it must scroll its media choices.
+    if (event.target.closest?.(".mb-mention-menu")) return;
     const canvasElement = app.canvas?.canvas;
     if (!canvasElement) return;
     event.preventDefault(); event.stopPropagation();
