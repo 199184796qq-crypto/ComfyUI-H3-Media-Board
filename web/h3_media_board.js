@@ -1448,6 +1448,101 @@ function decorateConditionLatentSwitch(node) {
   syncExternalMode();
 }
 
+const SECOND_PASS_GUIDE_GROUPS = 12;
+
+function secondPassGuideInputName(index, kind) {
+  const suffix = index === 1 ? "" : `_${index}`;
+  return `injection_${kind}${suffix}`;
+}
+
+function setSecondPassWidgetVisible(widget, visible) {
+  if (!widget) return;
+  if (!widget._h3GuideOriginal) {
+    widget._h3GuideOriginal = { computeSize: widget.computeSize, draw: widget.draw };
+  }
+  widget.hidden = !visible;
+  widget.options = widget.options || {};
+  widget.options.hidden = !visible;
+  if (widget._state) widget._state.hidden = !visible;
+  if (widget.element) widget.element.style.display = visible ? "" : "none";
+  if (visible) {
+    widget.computeSize = widget._h3GuideOriginal.computeSize;
+    widget.draw = widget._h3GuideOriginal.draw;
+  } else {
+    widget.computeSize = () => [0, -4];
+    widget.draw = () => {};
+  }
+}
+
+function decorateSecondPassPreparation(node) {
+  if (node._h3SecondPassPreparationDecorated) return;
+  const firstFrameWidget = node.widgets?.find((widget) => widget.name === "frame_idx");
+  if (!firstFrameWidget) {
+    const attempts = node._h3SecondPassPreparationAttempts || 0;
+    if (attempts < 8 && !node._h3SecondPassPreparationPending) {
+      node._h3SecondPassPreparationAttempts = attempts + 1;
+      node._h3SecondPassPreparationPending = true;
+      setTimeout(() => {
+        node._h3SecondPassPreparationPending = false;
+        decorateSecondPassPreparation(node);
+      }, 80 * (attempts + 1));
+    }
+    return;
+  }
+  node._h3SecondPassPreparationDecorated = true;
+
+  const findInput = (name) => node.inputs?.find((input) => input.name === name);
+  const ensureInput = (name, type, label) => {
+    let input = findInput(name);
+    if (!input) {
+      node.addInput?.(name, type, { shape: 7 });
+      input = findInput(name);
+    }
+    if (input) input.label = label;
+  };
+  const removeInputIfUnused = (name) => {
+    const index = node.inputs?.findIndex((input) => input.name === name) ?? -1;
+    if (index >= 0 && node.inputs[index].link == null) node.removeInput?.(index);
+  };
+  const groupHasConnection = (index) => {
+    const image = findInput(secondPassGuideInputName(index, "image"));
+    const audio = findInput(secondPassGuideInputName(index, "audio"));
+    return image?.link != null || audio?.link != null;
+  };
+  const refreshGroups = () => {
+    let lastConnected = 0;
+    for (let index = 1; index <= SECOND_PASS_GUIDE_GROUPS; index += 1) {
+      if (groupHasConnection(index)) lastConnected = index;
+    }
+    // Always retain one ready-to-connect group. Each used group reveals one
+    // further group below it, without a button or a crowded fixed port list.
+    const visibleGroups = Math.min(SECOND_PASS_GUIDE_GROUPS, Math.max(1, lastConnected + 1));
+    for (let index = 1; index <= SECOND_PASS_GUIDE_GROUPS; index += 1) {
+      const active = index <= visibleGroups;
+      const imageName = secondPassGuideInputName(index, "image");
+      const audioName = secondPassGuideInputName(index, "audio");
+      if (active) {
+        ensureInput(imageName, "IMAGE", `第 ${index} 组图片 / 帧串`);
+        ensureInput(audioName, "AUDIO", `第 ${index} 组音频`);
+      } else {
+        removeInputIfUnused(imageName);
+        removeInputIfUnused(audioName);
+      }
+      const frameName = index === 1 ? "frame_idx" : `frame_idx_${index}`;
+      setSecondPassWidgetVisible(node.widgets?.find((widget) => widget.name === frameName), active);
+    }
+    const preferred = node.computeSize?.();
+    if (preferred) node.setSize?.([Math.max(345, preferred[0]), Math.max(190, preferred[1])]);
+    node.graph?.setDirtyCanvas(true, true);
+  };
+  const previousConnections = node.onConnectionsChange;
+  node.onConnectionsChange = function (...args) {
+    previousConnections?.apply(this, args);
+    refreshGroups();
+  };
+  refreshGroups();
+}
+
 app.registerExtension({
   name: "h3.media_board",
   nodeCreated(node) {
@@ -1455,5 +1550,6 @@ app.registerExtension({
     if (node.comfyClass === "H3MediaBoardUnpack") decorateUnpacker(node);
     if (node.comfyClass === "H3ConditionLatentSwitch") decorateConditionLatentSwitch(node);
     if (node.comfyClass === "H3VideoModeControl") decorateVideoModeControl(node);
+    if (node.comfyClass === "H3SecondPassPreparation") decorateSecondPassPreparation(node);
   },
 });

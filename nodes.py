@@ -445,11 +445,183 @@ class H3VideoModeControl:
         return (not needs_multi_reference, media_board)
 
 
+class H3SecondPassPreparation:
+    """Rebuild H3 conditioning at the final latent size and optionally inject a guide.
+
+    The first sampler works at the Media Board's base resolution.  After the
+    video latent is upscaled, its old conditioning cannot safely be reused:
+    image keyframes embedded in it still have the base resolution.  This node
+    receives the *already upscaled and re-combined* AV latent, rebuilds the
+    selected H3 conditioning at exactly that size, and can add up to twelve
+    independent image/audio guide groups in one compact step for the second
+    sampler.
+    """
+
+    # The canvas reveals groups only as they are used, while this fixed backend
+    # schema keeps saved workflows and ComfyUI validation reliable.
+    MAX_GUIDE_GROUPS = 12
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        required = {
+            "media_board": ("H3_MEDIA_BOARD", {"tooltip": "接 H3 Media Board 或模式控制节点的 media_board 输出。"}),
+            "clip": ("CLIP",),
+            "vae": ("VAE", {"tooltip": "H3 视频 VAE。"}),
+            "audio_vae": ("VAE", {"tooltip": "H3 音频 VAE。"}),
+            "upscaled_latent": ("LATENT", {"tooltip": "接 LTXVConcatAVLatent 的 latent 输出。"}),
+            "use_image_text": (
+                "BOOLEAN",
+                {"default": True, "label_on": "图文 / 图生", "label_off": "多参参考"},
+            ),
+            "frame_idx": (
+                "INT",
+                {"default": 168, "min": -9999, "max": 9999, "step": 1, "label": "第 1 组注入起始帧"},
+            ),
+        }
+        optional = {
+            "external_switch": ("BOOLEAN", {"forceInput": True, "label": "自动模式开关", "tooltip": "接 H3 生视频模式控制的模式开关；接入后自动跟随素材类型。"}),
+            "injection_image": ("IMAGE", {"label": "第 1 组图片 / 帧串", "tooltip": "第 1 组：可接单张图片、视频帧批次或多帧图片序列。"}),
+            "injection_audio": ("AUDIO", {"label": "第 1 组音频", "tooltip": "第 1 组：可选，从该组起始帧开始注入音频。"}),
+        }
+        for group_index in range(2, cls.MAX_GUIDE_GROUPS + 1):
+            required[f"frame_idx_{group_index}"] = (
+                "INT",
+                {
+                    "default": 0, "min": -9999, "max": 9999, "step": 1,
+                    "label": f"第 {group_index} 组注入起始帧",
+                },
+            )
+            optional[f"injection_image_{group_index}"] = (
+                "IMAGE",
+                {"label": f"第 {group_index} 组图片 / 帧串", "tooltip": f"第 {group_index} 组：可接单张图片、视频帧批次或多帧图片序列。"},
+            )
+            optional[f"injection_audio_{group_index}"] = (
+                "AUDIO",
+                {"label": f"第 {group_index} 组音频", "tooltip": f"第 {group_index} 组：可选，从该组起始帧开始注入音频。"},
+            )
+        return {
+            "required": required,
+            "optional": optional,
+        }
+
+    RETURN_TYPES = ("CONDITIONING", "LATENT")
+    RETURN_NAMES = ("二采正向条件", "二采 latent")
+    FUNCTION = "prepare"
+    CATEGORY = "H3 / Media"
+
+    @staticmethod
+    def _target_shape(latent: dict[str, Any]) -> tuple[int, int, int]:
+        """Read pixel width, height and resolved frame count from an H3 AV latent."""
+        try:
+            from comfy.ldm.minimax.model import FRAME_PER_TOKEN
+
+            samples = latent["samples"]
+            video = samples.tensors[0]
+            if not samples.is_nested or video.ndim != 5 or video.shape[1] != 24:
+                raise ValueError
+            width = int(video.shape[4] * 16)
+            height = int(video.shape[3] * 16)
+            frames = int(sum(FRAME_PER_TOKEN[index % 5] for index in range(video.shape[2])))
+            return width, height, frames
+        except Exception as error:
+            raise ValueError("H3 二采准备需要 LTXVConcatAVLatent 输出的 MiniMax H3 AV latent。") from error
+
+    @staticmethod
+    def _choose_image_text(_manifest: dict[str, Any], local_value: bool, external_value: bool | None) -> bool:
+        if external_value is not None:
+            return bool(external_value)
+        return bool(local_value)
+
+    def prepare(
+        self,
+        media_board: dict[str, Any],
+        clip: Any,
+        vae: Any,
+        audio_vae: Any,
+        upscaled_latent: dict[str, Any],
+        use_image_text: bool,
+        frame_idx: int,
+        external_switch: bool | None = None,
+        injection_image: torch.Tensor | None = None,
+        injection_audio: dict[str, Any] | None = None,
+        **additional_guides: Any,
+    ):
+        try:
+            from comfy_extras.nodes_minimax_h3 import (
+                MiniMaxH3AddGuide,
+                MiniMaxH3ImageToVideo,
+                MiniMaxH3ReferenceToVideo,
+            )
+        except ImportError as error:
+            raise RuntimeError("未找到 ComfyUI 原生 MiniMax H3 节点；请更新 ComfyUI 后再使用 H3 二采准备。") from error
+
+        manifest = _clean_manifest(media_board)
+        width, height, frames = self._target_shape(upscaled_latent)
+        prompt = str(media_board.get("prompt", "")) if isinstance(media_board, dict) else ""
+        image_text_mode = self._choose_image_text(manifest, bool(use_image_text), external_switch)
+
+        if image_text_mode:
+            first_frame = _load_image(manifest["image"][0]) if manifest["image"] and manifest["image"][0] else None
+            last_frame = _load_image(manifest["image"][1]) if len(manifest["image"]) > 1 and manifest["image"][1] else None
+            positive = MiniMaxH3ImageToVideo.execute(
+                clip, vae, prompt, width, height, frames, first_frame, last_frame
+            )[0]
+        else:
+            ref_images = {
+                f"ref_image_{index}": _load_image(item)
+                for index, item in enumerate(manifest["image"])
+                if item is not None
+            }
+            ref_videos = {
+                f"ref_video_{index}": _load_video_frames(item)
+                for index, item in enumerate(manifest["video"])
+                if item is not None
+            }
+            ref_videos = {name: frames_tensor for name, frames_tensor in ref_videos.items() if frames_tensor is not None}
+            ref_video_audios = {
+                f"ref_video_audio_{index}": _load_audio(item)
+                for index, item in enumerate(manifest["video"])
+                if item is not None
+            }
+            ref_video_audios = {name: audio for name, audio in ref_video_audios.items() if audio is not None}
+            ref_audios = {
+                f"ref_audio_{index}": _load_audio(item)
+                for index, item in enumerate(manifest["audio"])
+                if item is not None
+            }
+            ref_audios = {name: audio for name, audio in ref_audios.items() if audio is not None}
+            positive = MiniMaxH3ReferenceToVideo.execute(
+                clip, vae, audio_vae, prompt, width, height, frames, "match",
+                ref_images, ref_videos, ref_video_audios, ref_audios,
+            )[0]
+
+        guide_groups = [(frame_idx, injection_image, injection_audio)]
+        for group_index in range(2, self.MAX_GUIDE_GROUPS + 1):
+            guide_groups.append((
+                additional_guides.get(f"frame_idx_{group_index}", 0),
+                additional_guides.get(f"injection_image_{group_index}"),
+                additional_guides.get(f"injection_audio_{group_index}"),
+            ))
+        # AddGuide appends a keyframe to the conditioning. Repeating it here
+        # lets one compact node place several stills, clips or audio cues at
+        # independent timeline positions for the second sampling pass.
+        for guide_frame_idx, guide_image, guide_audio in guide_groups:
+            if guide_image is None and guide_audio is None:
+                continue
+            positive = MiniMaxH3AddGuide.execute(
+                positive, upscaled_latent, int(guide_frame_idx),
+                vae=vae, audio_vae=audio_vae,
+                image=guide_image, audio=guide_audio,
+            )[0]
+        return (positive, upscaled_latent)
+
+
 NODE_CLASS_MAPPINGS = {
     "H3MediaBoard": H3MediaBoard,
     "H3MediaBoardUnpack": H3MediaBoardUnpack,
     "H3ConditionLatentSwitch": H3ConditionLatentSwitch,
     "H3VideoModeControl": H3VideoModeControl,
+    "H3SecondPassPreparation": H3SecondPassPreparation,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -457,4 +629,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3MediaBoardUnpack": "H3 Media Board Outputs",
     "H3ConditionLatentSwitch": "H3 条件与 Latent 切换",
     "H3VideoModeControl": "H3 生视频模式控制",
+    "H3SecondPassPreparation": "H3 二采准备（高分条件 / 注入帧）",
 }
