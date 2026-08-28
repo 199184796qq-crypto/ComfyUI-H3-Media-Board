@@ -1179,17 +1179,26 @@ function createDynamicMediaBoard(node) {
   root.className = "h3-media-board h3-dynamic-media-board";
   root.tabIndex = 0;
   const refreshOutputs = (state) => {
-    const imageCount = state.image.length;
-    const audioCount = state.audio.length;
-    node.outputs?.forEach((output, index) => {
-      const active = index < DYNAMIC_MEDIA_LIMIT
-        ? index < imageCount
-        : index - DYNAMIC_MEDIA_LIMIT < audioCount;
-      output.hidden = !active;
-      output.disabled = !active;
-      output.color = active ? undefined : "#59616a";
-      output.color_off = active ? undefined : "#59616a";
-    });
+    // Remove ComfyUI's fixed backend placeholders.  The server still has a
+    // 128-slot wildcard capacity, but the visible node owns only real media
+    // ports, ordered as all images followed by all audio clips.
+    const desired = [
+      ...state.image.map((_, index) => [`图片_${index + 1}`, "IMAGE"]),
+      ...state.audio.map((_, index) => [`音频_${index + 1}`, "AUDIO"]),
+    ];
+    const current = node.outputs || [];
+    const matches = current.length === desired.length && current.every(
+      (output, index) => output.name === desired[index][0] && output.type === desired[index][1],
+    );
+    if (!matches) {
+      const isPrefix = current.length <= desired.length && current.every(
+        (output, index) => output.name === desired[index][0] && output.type === desired[index][1],
+      );
+      if (!isPrefix) while (node.outputs?.length) node.removeOutput?.(node.outputs.length - 1);
+      for (let index = node.outputs?.length || 0; index < desired.length; index += 1) {
+        node.addOutput?.(desired[index][0], desired[index][1]);
+      }
+    }
     node.graph?.setDirtyCanvas?.(true, true);
   };
   const persist = (state) => {

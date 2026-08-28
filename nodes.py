@@ -769,7 +769,9 @@ class DynamicMediaBoard:
             },
         }
 
-    RETURN_TYPES = tuple(["IMAGE"] * DYNAMIC_MEDIA_LIMIT + ["AUDIO"] * DYNAMIC_MEDIA_LIMIT)
+    # The canvas creates only populated outputs at runtime.  A wildcard schema
+    # lets those dynamic slots be IMAGE or AUDIO in their visible order.
+    RETURN_TYPES = tuple("*" for _ in range(DYNAMIC_MEDIA_LIMIT * 2))
     RETURN_NAMES = tuple(
         [f"图片_{index}" for index in range(1, DYNAMIC_MEDIA_LIMIT + 1)]
         + [f"音频_{index}" for index in range(1, DYNAMIC_MEDIA_LIMIT + 1)]
@@ -781,9 +783,9 @@ class DynamicMediaBoard:
         manifest = _clean_dynamic_media_manifest(media_manifest)
         images = [_load_image(item) for item in manifest["image"]]
         audios = [_load_audio(item) for item in manifest["audio"]]
-        images += [None] * (DYNAMIC_MEDIA_LIMIT - len(images))
-        audios += [None] * (DYNAMIC_MEDIA_LIMIT - len(audios))
-        return tuple(images + audios)
+        values = images + audios
+        values += [None] * (DYNAMIC_MEDIA_LIMIT * 2 - len(values))
+        return tuple(values)
 
 
 NODE_CLASS_MAPPINGS = {
