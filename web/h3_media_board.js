@@ -2,6 +2,7 @@ import { app } from "../../scripts/app.js";
 
 const LIMITS = { image: 9, audio: 3, video: 3 };
 const DYNAMIC_MEDIA_LIMIT = 64;
+const DYNAMIC_MEDIA_COLUMNS = 6;
 const LABELS = { image: "参考图片", audio: "参考音频", video: "参考视频" };
 const ACCEPTS = { image: "image/*", audio: "audio/*", video: "video/*" };
 const H3_RATIOS = {
@@ -96,7 +97,18 @@ function injectStyle() {
        Extra vertical room is intentionally assigned to the prompt textarea. */
     .h3-media-board { display:flex; flex-direction:column; box-sizing:border-box; width:100%; height:100%; min-width:900px; max-width:900px; min-height:1170px; color:#ddd; font:12px system-ui, sans-serif; user-select:none; }
     .h3-dynamic-media-board { min-height:0; height:auto; padding-bottom:8px; }
-    .h3-dynamic-media-board .mb-dynamic-grid { display:grid; grid-template-columns:repeat(3, 294px); gap:7px; }
+    .h3-dynamic-media-board .mb-dynamic-grid { display:flex; flex-wrap:wrap; gap:7px; }
+    .h3-dynamic-media-board .mb-dynamic-grid .mb-card { width:145px; flex:0 0 145px; }
+    .h3-dynamic-media-board .mb-dynamic-grid .mb-image { height:72px; }
+    .h3-dynamic-media-board .mb-dynamic-grid .mb-audio { height:60px; }
+    .h3-dynamic-media-board .mb-dynamic-grid .mb-audio-player { grid-template-columns:22px 1fr; gap:5px; padding:19px 6px 14px; }
+    .h3-dynamic-media-board .mb-dynamic-grid .mb-audio-play { width:22px; height:22px; font-size:10px; }
+    .h3-dynamic-media-board .mb-dynamic-grid .mb-audio-player .mb-audio-time, .h3-dynamic-media-board .mb-dynamic-grid .mb-audio-player .mb-audio-seek { display:none; }
+    .h3-dynamic-media-board .mb-dynamic-grid .mb-card.empty { width:144px; min-width:144px; height:52px; min-height:52px; flex-basis:144px; font-size:11px; }
+    .h3-dynamic-media-board .mb-dynamic-grid .mb-card.empty .mb-index { top:5px; left:5px; padding:1px 6px; }
+    .h3-dynamic-media-board .mb-dynamic-section-title { display:flex; align-items:center; justify-content:space-between; width:fit-content; margin:10px 0 5px; padding:0; border:0; color:#c9c9c9; background:transparent; font:700 12px system-ui,sans-serif; cursor:pointer; }
+    .h3-dynamic-media-board .mb-dynamic-section-title:hover { color:#e6f2f4; }
+    .h3-dynamic-media-board .mb-dynamic-section-arrow { margin-left:8px; color:#88a8b3; font-size:11px; }
     .h3-dynamic-media-board .mb-title { margin-top:10px; }
     .h3-media-board .mb-title { margin: 8px 0 5px; color:#c9c9c9; font-weight:700; }
     .h3-media-board .mb-row { display:flex; gap:7px; min-height:78px; }
@@ -1175,6 +1187,7 @@ function createDynamicMediaBoard(node) {
 
   const saved = node.properties?.[DYNAMIC_MEDIA_SAVE_PROPERTY];
   if (saved && typeof saved.media_manifest === "string") manifestWidget.value = saved.media_manifest;
+  node._dynamicAudioCollapsed = Boolean(saved?.audio_collapsed);
   const root = document.createElement("div");
   root.className = "h3-media-board h3-dynamic-media-board";
   root.tabIndex = 0;
@@ -1204,17 +1217,35 @@ function createDynamicMediaBoard(node) {
   const persist = (state) => {
     manifestWidget.value = JSON.stringify(state);
     node.properties = node.properties || {};
-    node.properties[DYNAMIC_MEDIA_SAVE_PROPERTY] = { media_manifest: manifestWidget.value };
+    node.properties[DYNAMIC_MEDIA_SAVE_PROPERTY] = {
+      media_manifest: manifestWidget.value,
+      audio_collapsed: Boolean(node._dynamicAudioCollapsed),
+    };
     node.graph?.setDirtyCanvas?.(true, true);
   };
   const render = () => {
     const state = readDynamicMediaManifest(manifestWidget);
     root.replaceChildren();
     for (const kind of ["image", "audio"]) {
-      const title = document.createElement("div");
-      title.className = "mb-title";
-      title.textContent = `${kind === "image" ? "动态图片" : "动态音频"} · 已添加 ${state[kind].length}`;
+      const isAudio = kind === "audio";
+      const title = document.createElement(isAudio ? "button" : "div");
+      title.className = isAudio ? "mb-dynamic-section-title" : "mb-title";
+      if (isAudio) {
+        title.type = "button";
+        const label = document.createElement("span");
+        label.textContent = `动态音频 · 已添加 ${state.audio.length}`;
+        const arrow = document.createElement("span");
+        arrow.className = "mb-dynamic-section-arrow";
+        arrow.textContent = node._dynamicAudioCollapsed ? "▸ 展开" : "▾ 折叠";
+        title.append(label, arrow);
+        title.onclick = (event) => {
+          stop(event);
+          node._dynamicAudioCollapsed = !node._dynamicAudioCollapsed;
+          persist(state); render();
+        };
+      } else title.textContent = `动态图片 · 已添加 ${state.image.length}`;
       root.appendChild(title);
+      if (isAudio && node._dynamicAudioCollapsed) continue;
       const grid = document.createElement("div");
       grid.className = "mb-dynamic-grid";
       const visible = Math.min(DYNAMIC_MEDIA_LIMIT, state[kind].length + 1);
@@ -1229,9 +1260,15 @@ function createDynamicMediaBoard(node) {
       root.appendChild(grid);
     }
     refreshOutputs(state);
-    const imageRows = Math.ceil(Math.min(DYNAMIC_MEDIA_LIMIT, state.image.length + 1) / 3);
-    const audioRows = Math.ceil(Math.min(DYNAMIC_MEDIA_LIMIT, state.audio.length + 1) / 3);
-    const height = Math.max(292, 44 + imageRows * 139 + 36 + audioRows * 85);
+    const sectionHeight = (count, fullRowHeight) => {
+      if (count === 0) return 58;
+      const fullRows = Math.ceil(count / DYNAMIC_MEDIA_COLUMNS);
+      return fullRows * fullRowHeight + (count % DYNAMIC_MEDIA_COLUMNS === 0 && count < DYNAMIC_MEDIA_LIMIT ? 58 : 0);
+    };
+    const imageHeight = sectionHeight(state.image.length, 75);
+    const audioHeight = node._dynamicAudioCollapsed ? 0 : sectionHeight(state.audio.length, 63);
+    const height = Math.max(170, 54 + imageHeight + 30 + audioHeight);
+    node._dynamicMediaAutoHeight = height;
     node.setSize?.([930, height]);
   };
   node._dynamicMediaRender = render;
@@ -1239,6 +1276,7 @@ function createDynamicMediaBoard(node) {
     const backup = configured?.properties?.[DYNAMIC_MEDIA_SAVE_PROPERTY]
       || node.properties?.[DYNAMIC_MEDIA_SAVE_PROPERTY];
     if (backup && typeof backup.media_manifest === "string") manifestWidget.value = backup.media_manifest;
+    if (backup && typeof backup.audio_collapsed === "boolean") node._dynamicAudioCollapsed = backup.audio_collapsed;
     render();
   };
   const priorSerialize = node.onSerialize;
@@ -1246,7 +1284,10 @@ function createDynamicMediaBoard(node) {
     const serialized = args[0];
     if (serialized && typeof serialized === "object") {
       serialized.properties = serialized.properties || {};
-      serialized.properties[DYNAMIC_MEDIA_SAVE_PROPERTY] = { media_manifest: manifestWidget.value || "{}" };
+      serialized.properties[DYNAMIC_MEDIA_SAVE_PROPERTY] = {
+        media_manifest: manifestWidget.value || "{}",
+        audio_collapsed: Boolean(node._dynamicAudioCollapsed),
+      };
     }
     return priorSerialize?.apply(this, args);
   };
@@ -1261,14 +1302,27 @@ function createDynamicMediaBoard(node) {
     }));
   }, { passive: false });
   render();
-  node.min_size = [930, 292];
+  // This board's size is data-driven.  Disable the user resize handle and
+  // clamp any legacy canvas resize gesture back to the current card layout.
+  node.resizable = false;
+  node.min_size = [930, 170];
   node.min_width = 930;
   node.max_width = 930;
+  const priorResize = node.onResize;
+  node.onResize = function (size) {
+    size[0] = 930;
+    size[1] = this._dynamicMediaAutoHeight || 170;
+    priorResize?.call(this, size);
+  };
   node.addDOMWidget("dynamic_media_board_ui", "DYNAMIC_MEDIA_BOARD_UI", root, {
     getValue: () => "dynamic-media-board",
     getMinHeight: () => Math.max(240, node.size[1] - 48),
     getHeight: () => Math.max(240, node.size[1] - 48),
   });
+  // Node creation starts with backend-reserved outputs.  They can temporarily
+  // inflate LiteGraph's minimum height, so apply the measured height again
+  // after the placeholder sockets and resize constraints are in place.
+  node.setSize?.([930, node._dynamicMediaAutoHeight || 170]);
 }
 
 function decorateUnpacker(node) {
