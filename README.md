@@ -2,8 +2,8 @@
 
 一个媒体收集节点和一个拆分输出节点：
 
-- `H3 Media Board (9 Image / 3 Audio / 3 Video)`：9 张图、3 段音频、3 个视频、提示词，以及内嵌的 H3 时长、画幅、百万像素与倍数设置。可选择自动计算对齐帧数，或关闭后手动输入帧数。
-- `H3 Media Board Outputs`：接收上方节点唯一的 `media_board` 输出，提供参考图片、视频帧批次、视频音频、音频、提示词，以及 `duration`、`width`、`height`、`frames` 参数输出；未放入媒体的位置返回空值，前端会标记为未激活。
+- `H3 Media Board (9 Image / 3 Audio / 3 Video)`：9 张图、3 段音频、3 个视频、提示词，以及内嵌的 H3 时长、画幅、百万像素与倍数设置。可选择自动计算对齐帧数，或关闭后手动输入帧数；还可设置固定、每次排队随机或复用上次的 Noise 种子。
+- `H3 Media Board Outputs`：接收上方节点唯一的 `media_board` 输出，提供参考图片、视频帧批次、视频音频、音频、提示词、`duration`、`width`、`height`、`frames`，以及可直接连接 `SamplerCustomAdvanced` 的 `noise` 输出；未放入媒体的位置返回空值，前端会标记为未激活。
 
 ## 安装
 
@@ -19,7 +19,7 @@
 2. 图片双击可放大预览；音频与视频卡片内有原生播放控件；每个已有媒体可替换或删除。
 3. 删除后使用连续编号，例如删除图片 2，原图片 3 会成为图片 2。
 4. 将唯一的 `media_board` 输出连接到 **H3 Media Board Outputs**。
-5. 将实际有内容的媒体输出连接到后续生成节点；`prompt`、`duration`、`width`、`height`、`frames` 可直接接入 H3 工作流对应插口。
+5. 将实际有内容的媒体输出连接到后续生成节点；`prompt`、`duration`、`width`、`height`、`frames` 可直接接入 H3 工作流对应插口，`noise` 可接到 `SamplerCustomAdvanced` 的 noise 输入。
 
 上传的文件保存在 `ComfyUI/input/h3_media_board/`，工作流保存的是相对路径。
 

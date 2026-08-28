@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import secrets
 import shutil
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,8 @@ ASPECT_RATIOS = {
     "1:1": (1, 1), "2:3": (2, 3), "3:2": (3, 2), "3:4": (3, 4),
     "4:3": (4, 3), "9:16": (9, 16), "16:9": (16, 9), "21:9": (21, 9),
 }
+MAX_SEED = 0x1FFFFFFFFFFFFF  # Exact integer range supported by browser number inputs.
+_LAST_QUEUED_SEEDS: dict[str, int] = {}
 
 
 def _input_root() -> Path:
@@ -183,6 +186,31 @@ def _h3_settings(duration: float, aspect_ratio: str, megapixels: float, multiple
     }
 
 
+class _H3SeedNoise:
+    """ComfyUI-compatible NOISE provider for SamplerCustomAdvanced."""
+
+    def __init__(self, seed: int):
+        self.seed = int(seed)
+
+    def generate_noise(self, input_latent: dict[str, Any]):
+        import comfy.sample
+
+        return comfy.sample.prepare_noise(input_latent["samples"], self.seed, input_latent.get("batch_index"))
+
+
+def _effective_noise_seed(seed: int, mode: str, unique_id: str | None) -> int:
+    key = str(unique_id or "default")
+    seed = max(0, min(MAX_SEED, int(seed)))
+    if mode == "random_each_queue":
+        effective = secrets.randbelow(MAX_SEED + 1)
+    elif mode == "reuse_last_queue":
+        effective = _LAST_QUEUED_SEEDS.get(key, seed)
+    else:
+        effective = seed
+    _LAST_QUEUED_SEEDS[key] = effective
+    return effective
+
+
 class H3MediaBoard:
     """One-output visual media collector.
 
@@ -203,11 +231,15 @@ class H3MediaBoard:
                 "multiple": ("INT", {"default": 32, "min": 8, "max": 128, "step": 4}),
                 "auto_calculate": ("BOOLEAN", {"default": True, "label_on": "自动计算帧数", "label_off": "手动帧数"}),
                 "manual_frames": ("INT", {"default": 362, "min": 1, "max": 10000, "step": 1}),
+                "noise_seed": ("INT", {"default": 0, "min": 0, "max": MAX_SEED}),
+                "noise_mode": (["fixed", "random_each_queue", "reuse_last_queue"], {"default": "fixed"}),
+                "noise_after_generate": (["fixed", "randomize", "increment", "decrement"], {"default": "randomize"}),
             },
             # A separate forced input guarantees a visible socket in both the
             # legacy canvas and Nodes 2.0.  The local textarea remains usable
             # whenever this optional input is not connected.
             "optional": {"external_prompt": ("STRING", {"forceInput": True})},
+            "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
     RETURN_TYPES = ("H3_MEDIA_BOARD",)
@@ -215,13 +247,29 @@ class H3MediaBoard:
     FUNCTION = "collect"
     CATEGORY = "H3 / Media"
 
+    @classmethod
+    def IS_CHANGED(cls, noise_mode: str = "fixed", **_kwargs):
+        # A random-each-queue noise source must not be served from execution cache.
+        return float("nan") if noise_mode == "random_each_queue" else noise_mode
+
     def collect(self, prompt: str, media_manifest: str, duration: float, aspect_ratio: str,
                 megapixels: float, multiple: int, auto_calculate: bool, manual_frames: int,
-                external_prompt: str | None = None):
+                noise_seed: int, noise_mode: str, external_prompt: str | None = None,
+                unique_id: str | None = None, noise_after_generate: str = "randomize"):
         manifest = _clean_manifest(media_manifest)
         manifest["prompt"] = external_prompt if external_prompt is not None else prompt
-        manifest["settings"] = _h3_settings(duration, aspect_ratio, megapixels, multiple, auto_calculate, manual_frames)
-        return {"ui": {"h3_media_board": [manifest]}, "result": (manifest,)}
+        settings = _h3_settings(duration, aspect_ratio, megapixels, multiple, auto_calculate, manual_frames)
+        effective_seed = _effective_noise_seed(noise_seed, noise_mode, unique_id)
+        settings["noise"] = {
+            "seed": int(noise_seed), "mode": noise_mode, "after_generate": noise_after_generate,
+            "effective_seed": effective_seed,
+        }
+        manifest["settings"] = settings
+        # UI payload must remain JSON serializable; the executable noise object
+        # travels only through the in-memory board output to the unpack node.
+        runtime_manifest = dict(manifest)
+        runtime_manifest["_noise_object"] = _H3SeedNoise(effective_seed)
+        return {"ui": {"h3_media_board": [manifest]}, "result": (runtime_manifest,)}
 
 
 class H3MediaBoardUnpack:
@@ -239,14 +287,14 @@ class H3MediaBoardUnpack:
     # H3's ref_videos ports take IMAGE frame batches, not ComfyUI VIDEO objects.
     RETURN_TYPES = tuple(
         ["IMAGE"] * 9 + ["IMAGE"] * 3 + ["AUDIO"] * 3 + ["AUDIO"] * 3
-        + ["STRING", "FLOAT", "INT", "INT", "INT"]
+        + ["STRING", "FLOAT", "INT", "INT", "INT", "NOISE"]
     )
     RETURN_NAMES = tuple(
         [f"image_{index}" for index in range(1, 10)]
         + [f"video_{index}" for index in range(1, 4)]
         + [f"video_audio_{index}" for index in range(1, 4)]
         + [f"audio_{index}" for index in range(1, 4)]
-        + ["prompt", "duration", "width", "height", "frames"]
+        + ["prompt", "duration", "width", "height", "frames", "noise"]
     )
     FUNCTION = "unpack"
     CATEGORY = "H3 / Media"
@@ -267,8 +315,12 @@ class H3MediaBoardUnpack:
             settings.get("megapixels", 0.4), settings.get("multiple", 32),
             settings.get("auto_calculate", True), settings.get("manual_frames", 362),
         )
+        noise_settings = settings.get("noise", {}) if isinstance(settings, dict) else {}
+        noise = media_board.get("_noise_object") if isinstance(media_board, dict) else None
+        if noise is None:
+            noise = _H3SeedNoise(int(noise_settings.get("effective_seed", noise_settings.get("seed", 0))))
         return tuple(images + videos + video_audios + audios + [
-            str(media_board.get("prompt", "")), params["duration"], params["width"], params["height"], params["frames"],
+            str(media_board.get("prompt", "")), params["duration"], params["width"], params["height"], params["frames"], noise,
         ])
 
 

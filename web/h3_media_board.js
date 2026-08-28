@@ -52,7 +52,9 @@ function injectStyle() {
   const style = document.createElement("style");
   style.id = "h3-media-board-style";
   style.textContent = `
-    .h3-media-board { display:flex; flex-direction:column; box-sizing:border-box; width:100%; height:100%; min-width:900px; max-width:900px; min-height:1010px; color:#ddd; font:12px system-ui, sans-serif; user-select:none; }
+    /* Media, H3 settings, Noise and the prompt must all remain inside the node.
+       Extra vertical room is intentionally assigned to the prompt textarea. */
+    .h3-media-board { display:flex; flex-direction:column; box-sizing:border-box; width:100%; height:100%; min-width:900px; max-width:900px; min-height:1170px; color:#ddd; font:12px system-ui, sans-serif; user-select:none; }
     .h3-media-board .mb-title { margin: 8px 0 5px; color:#c9c9c9; font-weight:700; }
     .h3-media-board .mb-row { display:flex; gap:7px; min-height:78px; }
     .h3-media-board .mb-image-grid { display:grid; grid-template-columns:repeat(3, 294px); gap:7px; }
@@ -90,6 +92,21 @@ function injectStyle() {
     .h3-media-board .mb-setting input[type="checkbox"] { width:auto; height:auto; padding:0; accent-color:#69ee7a; transform:scale(1.18); }
     .h3-media-board .mb-setting input:disabled { opacity:.45; cursor:not-allowed; }
     .h3-media-board .mb-output-summary { grid-column:1 / -1; padding:7px 9px; border-left:3px solid #69ee7a; border-radius:4px; color:#76ec87; background:#13271a; font-size:13px; font-weight:800; letter-spacing:.15px; }
+    /* Keep the seed controls as a compact toolbar.  The panel may be wide,
+       but its controls must not stretch simply to fill available space. */
+    .h3-media-board .mb-noise { position:relative; display:grid; grid-template-columns:minmax(220px,280px) repeat(3, max-content); justify-content:start; gap:8px; align-items:end; margin:16px 0 2px; padding:27px 12px 11px; border:1px solid #685b91; border-radius:9px; background:linear-gradient(145deg,#282338 0%,#1b1925 100%); box-shadow:inset 0 1px #ffffff08, 0 2px 8px #0004; }
+    .h3-media-board .mb-noise-head { position:absolute; top:-11px; left:12px; display:flex; align-items:center; gap:8px; padding:3px 9px; border:1px solid #685b91; border-radius:6px; color:#f0ecff; background:#282338; }
+    .h3-media-board .mb-noise-title { color:#c7b2ff; font-size:12px; font-weight:800; letter-spacing:.35px; }
+    .h3-media-board .mb-noise-caption { color:#a89eba; font-size:10px; }
+    .h3-media-board .mb-noise-after { grid-column:1 / -1; justify-self:start; width:fit-content; display:flex; align-items:center; gap:9px; padding:6px 8px; border:1px solid #51466e; border-radius:6px; background:#171421; }
+    .h3-media-board .mb-noise-after label { color:#c0b7d2; font-size:11px; font-weight:800; white-space:nowrap; }
+    .h3-media-board .mb-noise-after select { flex:0 1 210px; width:210px; min-width:0; height:27px; padding:3px 7px; color:#f1ebff; background:#252038; border:1px solid #74639e; border-radius:4px; outline:none; font:11px system-ui, sans-serif; }
+    .h3-media-board .mb-noise-field { display:flex; flex-direction:column; gap:4px; min-width:0; }
+    .h3-media-board .mb-noise-field label { color:#b7aec9; font-size:10px; font-weight:700; }
+    .h3-media-board .mb-noise-field input { box-sizing:border-box; width:100%; height:29px; padding:4px 7px; color:#f3efff; background:#14121d; border:1px solid #675b86; border-radius:5px; outline:none; font:12px ui-monospace, Consolas, monospace; }
+    .h3-media-board .mb-noise-action { width:132px; height:29px; padding:0 8px; border:1px solid #645588; border-radius:5px; color:#e9e2ff; background:#332b48; cursor:pointer; font:11px system-ui, sans-serif; white-space:nowrap; }
+    .h3-media-board .mb-noise-action:hover { border-color:#c7b2ff; background:#443862; }
+    .h3-media-board .mb-noise-status { grid-column:1 / -1; justify-self:start; width:fit-content; max-width:100%; padding:6px 8px; border-left:3px solid #b998ff; border-radius:4px; color:#d8ccff; background:#211d30; font-size:11px; }
     .h3-media-board textarea { display:block; box-sizing:border-box; flex:1 1 auto; width:100%; min-height:145px; margin:9px 0 4px; padding:8px; resize:none; color:#ececec; background:#15181b; border:1px solid #586168; border-radius:6px; font:12px ui-monospace, Consolas, monospace; }
     .mb-preview { position:fixed; z-index:10000; inset:0; display:grid; place-items:center; background:#000b; } .mb-preview img { max-width:90vw; max-height:90vh; }
   `;
@@ -330,12 +347,75 @@ function makeH3SettingsPanel(widgets, node) {
   return panel;
 }
 
+function newNoiseSeed() {
+  if (globalThis.crypto?.getRandomValues) {
+    const values = new Uint32Array(2); globalThis.crypto.getRandomValues(values);
+    return (values[0] & 0x1fffff) * 4294967296 + values[1];
+  }
+  return Math.floor(Math.random() * 9007199254740991);
+}
+
+function makeNoisePanel(widgets, node) {
+  const panel = document.createElement("div"); panel.className = "mb-noise";
+  const header = document.createElement("div"); header.className = "mb-noise-head";
+  const title = document.createElement("span"); title.className = "mb-noise-title"; title.textContent = "Noise 种子";
+  const caption = document.createElement("span"); caption.className = "mb-noise-caption"; caption.textContent = "SamplerCustomAdvanced 可直接连接";
+  header.append(title, caption); panel.appendChild(header);
+  const seedField = document.createElement("div"); seedField.className = "mb-noise-field";
+  const seedLabel = document.createElement("label"); seedLabel.textContent = "固定种子";
+  const seedInput = document.createElement("input"); seedInput.type = "number"; seedInput.min = "0"; seedInput.max = "9007199254740991"; seedInput.step = "1"; seedInput.value = String(widgets.noise_seed.value ?? 0);
+  seedField.append(seedLabel, seedInput); panel.appendChild(seedField);
+  const status = document.createElement("div"); status.className = "mb-noise-status";
+  const setWidget = (name, value) => {
+    widgets[name].value = value;
+    widgets[name].callback?.(value);
+    node._h3SaveBackup?.();
+    node.graph?.setDirtyCanvas(true, true);
+  };
+  const afterField = document.createElement("div"); afterField.className = "mb-noise-after";
+  const afterLabel = document.createElement("label"); afterLabel.textContent = "生成后控制";
+  const afterSelect = document.createElement("select");
+  const afterOptions = [["fixed", "保持固定种子"], ["randomize", "随机种子"], ["increment", "种子 +1"], ["decrement", "种子 −1"]];
+  afterOptions.forEach(([value, label]) => { const option = document.createElement("option"); option.value = value; option.textContent = label; afterSelect.appendChild(option); });
+  afterSelect.value = widgets.noise_after_generate.value || "randomize";
+  afterSelect.onchange = () => { setWidget("noise_after_generate", afterSelect.value); paintStatus(); };
+  afterField.append(afterLabel, afterSelect);
+  panel.insertBefore(afterField, seedField);
+  const paintStatus = () => {
+    const mode = widgets.noise_mode.value || "fixed";
+    const actual = node._h3EffectiveNoiseSeed;
+    const afterLabels = { fixed: "保持固定", randomize: "随机", increment: "+1", decrement: "−1" };
+    const after = afterLabels[widgets.noise_after_generate.value] || "随机";
+    if (mode === "random_each_queue") status.textContent = actual == null ? `每次排队会生成一个新随机种子；生成后：${after}。` : `本次排队随机种子：${actual}；生成后：${after}。`;
+    else if (mode === "reuse_last_queue") status.textContent = actual == null ? `下次排队将复用上次的随机种子；生成后：${after}。` : `正在复用上次排队种子：${actual}；生成后：${after}。`;
+    else status.textContent = `固定种子：${widgets.noise_seed.value ?? 0}；生成后：${after}。`;
+  };
+  seedInput.onchange = () => { setWidget("noise_seed", Math.max(0, Math.min(9007199254740991, Math.round(Number(seedInput.value) || 0)))); seedInput.value = String(widgets.noise_seed.value); setWidget("noise_mode", "fixed"); paintStatus(); };
+  const action = (label, onClick) => { const button = document.createElement("button"); button.type = "button"; button.className = "mb-noise-action"; button.textContent = label; button.onclick = onClick; panel.appendChild(button); };
+  action("🎲 每次排队随机", () => { setWidget("noise_mode", "random_each_queue"); paintStatus(); });
+  action("🎲 新建固定种子", () => { const seed = newNoiseSeed(); setWidget("noise_seed", seed); seedInput.value = String(seed); setWidget("noise_mode", "fixed"); node._h3EffectiveNoiseSeed = seed; paintStatus(); });
+  action("♻ 使用上次种子", () => { setWidget("noise_mode", "reuse_last_queue"); paintStatus(); });
+  panel.appendChild(status);
+  node._h3NoiseSeedInput = seedInput;
+  node._h3RefreshNoisePanel = paintStatus;
+  paintStatus();
+  return panel;
+}
+
 function createBoard(node) {
+  if (node._h3BoardCreated) return;
   injectStyle();
   const manifestWidget = node.widgets?.find((widget) => widget.name === "media_manifest");
   const promptWidget = node.widgets?.find((widget) => widget.name === "prompt");
-  const settingsWidgets = Object.fromEntries(["duration", "aspect_ratio", "megapixels", "multiple", "auto_calculate", "manual_frames"].map((name) => [name, node.widgets?.find((widget) => widget.name === name)]));
-  if (!manifestWidget || !promptWidget) return;
+  const settingsWidgets = Object.fromEntries(["duration", "aspect_ratio", "megapixels", "multiple", "auto_calculate", "manual_frames", "noise_seed", "noise_mode", "noise_after_generate"].map((name) => [name, node.widgets?.find((widget) => widget.name === name)]));
+  const retryWhenWidgetsReady = () => {
+    const attempts = node._h3BoardInitAttempts || 0;
+    if (attempts >= 8 || node._h3BoardInitScheduled) return;
+    node._h3BoardInitAttempts = attempts + 1;
+    node._h3BoardInitScheduled = true;
+    setTimeout(() => { node._h3BoardInitScheduled = false; createBoard(node); }, 80 * (attempts + 1));
+  };
+  if (!manifestWidget || !promptWidget) { retryWhenWidgetsReady(); return; }
   // Widgets retain normal workflow serialization; their controls are rendered
   // inside the board so the media and H3 setup stay in one place.
   const hideNativeWidget = (widget) => {
@@ -349,11 +429,14 @@ function createBoard(node) {
     widget.computeSize = () => [0, -4];
     widget.draw = () => {};
   };
-  for (const widget of [manifestWidget, promptWidget]) hideNativeWidget(widget);
+  // ComfyUI can add an auxiliary "after generate" widget for seed-like
+  // controls. Hide every pre-existing native widget, not only our named
+  // fields, so the DOM panels remain the single source of visible controls.
+  for (const widget of node.widgets || []) hideNativeWidget(widget);
   // Hiding prompt first keeps an older workflow from drawing its native
   // multiline field over the board while ComfyUI upgrades its widget schema.
-  if (Object.values(settingsWidgets).some((widget) => !widget)) return;
-  for (const widget of Object.values(settingsWidgets)) hideNativeWidget(widget);
+  if (Object.values(settingsWidgets).some((widget) => !widget)) { retryWhenWidgetsReady(); return; }
+  node._h3BoardCreated = true;
 
   const sessionKey = `h3-media-board-live:${node.id}`;
   let sessionSaved = null;
@@ -381,6 +464,25 @@ function createBoard(node) {
     try { sessionStorage.setItem(sessionKey, JSON.stringify(backup)); } catch (_) { /* storage can be unavailable */ }
   };
   node._h3SaveBackup = saveBackup;
+  const priorExecuted = node.onExecuted;
+  node.onExecuted = function (message, ...args) {
+    const result = priorExecuted?.call(this, message, ...args);
+    const actualSeed = message?.h3_media_board?.[0]?.settings?.noise?.effective_seed;
+    if (Number.isSafeInteger(actualSeed)) {
+      this._h3EffectiveNoiseSeed = actualSeed;
+      const after = settingsWidgets.noise_after_generate.value || "randomize";
+      let nextSeed = actualSeed;
+      if (after === "randomize") nextSeed = newNoiseSeed();
+      else if (after === "increment") nextSeed = Math.min(9007199254740991, actualSeed + 1);
+      else if (after === "decrement") nextSeed = Math.max(0, actualSeed - 1);
+      settingsWidgets.noise_seed.value = nextSeed;
+      if (this._h3NoiseSeedInput) this._h3NoiseSeedInput.value = String(nextSeed);
+      this._h3SaveBackup?.();
+      this._h3RefreshNoisePanel?.();
+      this.graph?.setDirtyCanvas(true, true);
+    }
+    return result;
+  };
   const priorSerialize = node.onSerialize;
   node.onSerialize = function (...args) {
     saveBackup();
@@ -475,11 +577,14 @@ function createBoard(node) {
       stop(event); await appendFiles(files);
     };
     root.appendChild(makeH3SettingsPanel(settingsWidgets, node));
+    root.appendChild(makeNoisePanel(settingsWidgets, node));
     root.appendChild(prompt);
   };
   prompt.oninput = () => { promptWidget.value = prompt.value; promptWidget.callback?.(prompt.value); saveBackup(); node.graph?.setDirtyCanvas(true, true); };
   render();
-  const minSize = [930, 1070];
+  // The Noise controls added below the H3 settings need real node height;
+  // otherwise the flexible prompt editor can paint past the node boundary.
+  const minSize = [930, 1220];
   const fixedWidth = minSize[0];
   node.min_width = fixedWidth;
   node.max_width = fixedWidth;
@@ -497,8 +602,8 @@ function createBoard(node) {
   };
   const domWidget = node.addDOMWidget("media_board_ui", "H3_MEDIA_BOARD_UI", root, {
     getValue: () => "media-board",
-    getMinHeight: () => 1010,
-    getHeight: () => Math.max(1010, node.size[1] - 48),
+    getMinHeight: () => 1170,
+    getHeight: () => Math.max(1170, node.size[1] - 48),
     afterResize: () => { prompt.style.minHeight = "145px"; },
   });
   node.size = [Math.max(minSize[0], node.size[0]), Math.max(minSize[1], node.size[1])];
