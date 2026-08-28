@@ -1,0 +1,283 @@
+"""Media board and media-board unpacker for ComfyUI.
+
+The package intentionally stores uploaded media inside ComfyUI/input/h3_media_board.
+That keeps workflow JSON portable: the saved manifest holds paths relative to input.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import re
+import shutil
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import torch
+from aiohttp import web
+from PIL import Image, ImageOps
+
+import folder_paths
+from server import PromptServer
+
+
+MAX_COUNTS = {"image": 9, "audio": 3, "video": 3}
+SAFE_KIND = set(MAX_COUNTS)
+UPLOAD_DIRNAME = "h3_media_board"
+ASPECT_RATIOS = {
+    "1:1": (1, 1), "2:3": (2, 3), "3:2": (3, 2), "3:4": (3, 4),
+    "4:3": (4, 3), "9:16": (9, 16), "16:9": (16, 9), "21:9": (21, 9),
+}
+
+
+def _input_root() -> Path:
+    root = Path(folder_paths.get_input_directory()) / UPLOAD_DIRNAME
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _safe_relative_path(value: str) -> Path:
+    """Resolve a manifest entry, rejecting paths outside the upload directory."""
+    root = _input_root().resolve()
+    candidate = (Path(folder_paths.get_input_directory()) / value).resolve()
+    if root not in candidate.parents and candidate != root:
+        raise ValueError("Media path is outside input/h3_media_board")
+    return candidate
+
+
+def _clean_manifest(raw: str | list[dict[str, Any]] | None) -> dict[str, list[dict[str, str]]]:
+    result: dict[str, list[dict[str, str]]] = {kind: [] for kind in MAX_COUNTS}
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else (raw or {})
+    except json.JSONDecodeError:
+        return result
+    if not isinstance(parsed, dict):
+        return result
+
+    for kind, limit in MAX_COUNTS.items():
+        items = parsed.get(kind, [])
+        if not isinstance(items, list):
+            continue
+        for item in items[:limit]:
+            if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+                continue
+            try:
+                path = _safe_relative_path(item["path"])
+            except ValueError:
+                continue
+            if not path.is_file():
+                continue
+            result[kind].append(
+                {
+                    "path": item["path"].replace("\\", "/"),
+                    "name": str(item.get("name") or path.name),
+                }
+            )
+    return result
+
+
+async def _upload_media(request: web.Request) -> web.Response:
+    """Small, node-scoped uploader used by the browser-side media cards."""
+    body = await request.post()
+    kind = str(body.get("kind", ""))
+    upload = body.get("file")
+    if kind not in SAFE_KIND or upload is None or not getattr(upload, "filename", None):
+        return web.json_response({"error": "A media kind and file are required."}, status=400)
+
+    original_name = Path(upload.filename).name
+    stem = re.sub(r"[^\w.-]+", "_", Path(original_name).stem, flags=re.UNICODE).strip("._") or kind
+    suffix = re.sub(r"[^A-Za-z0-9.]", "", Path(original_name).suffix.lower())[:12]
+    # A unique prefix avoids overwriting an earlier workflow asset with the same name.
+    import uuid
+
+    filename = f"{uuid.uuid4().hex[:10]}_{stem}{suffix}"
+    destination = _input_root() / filename
+    with destination.open("wb") as target:
+        shutil.copyfileobj(upload.file, target)
+
+    return web.json_response(
+        {
+            "path": f"{UPLOAD_DIRNAME}/{filename}",
+            "name": original_name,
+        }
+    )
+
+
+# This is intentionally a dedicated endpoint rather than ComfyUI's image-only uploader:
+# audio and video need the exact same upload flow as images.
+PromptServer.instance.routes.post("/h3_media_board/upload")(_upload_media)
+
+
+def _load_image(item: dict[str, str]) -> torch.Tensor:
+    path = _safe_relative_path(item["path"])
+    with Image.open(path) as image:
+        image = ImageOps.exif_transpose(image).convert("RGB")
+        pixels = np.asarray(image).astype(np.float32) / 255.0
+    return torch.from_numpy(pixels)[None,]
+
+
+def _media_descriptor(item: dict[str, str] | None) -> dict[str, str] | None:
+    if item is None:
+        return None
+    # This descriptor is deliberately simple and can be consumed by media loader nodes.
+    # It follows ComfyUI's conventional input-file shape.
+    return {"filename": item["path"], "subfolder": "", "type": "input", "name": item["name"]}
+
+
+def _load_audio(item: dict[str, str] | None) -> dict[str, Any] | None:
+    """Decode an audio file or a video's embedded audio into ComfyUI AUDIO."""
+    if item is None:
+        return None
+    try:
+        # ComfyUI's own decoder handles MP3/AAC/WAV as well as audio streams
+        # inside MP4/MOV/WebM. It returns [channels, samples].
+        from comfy_extras.nodes_audio import load as decode_audio
+
+        waveform, sample_rate = decode_audio(str(_safe_relative_path(item["path"])))
+        return {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
+    except Exception as error:  # No stream is a valid state for a silent video.
+        print(f"[H3 Media Board] Unable to decode audio from {item['name']}: {error}")
+        return None
+
+
+def _load_video_frames(item: dict[str, str] | None) -> torch.Tensor | None:
+    """Decode a video to ComfyUI's IMAGE frame-batch format [F,H,W,C]."""
+    if item is None:
+        return None
+    try:
+        import av
+
+        frames: list[np.ndarray] = []
+        with av.open(str(_safe_relative_path(item["path"]))) as container:
+            if not container.streams.video:
+                return None
+            stream = container.streams.video[0]
+            for frame in container.decode(stream):
+                frames.append(frame.to_ndarray(format="rgb24"))
+        if not frames:
+            return None
+        return torch.from_numpy(np.stack(frames)).float().div_(255.0)
+    except Exception as error:
+        print(f"[H3 Media Board] Unable to decode video from {item['name']}: {error}")
+        return None
+
+
+def _h3_settings(duration: float, aspect_ratio: str, megapixels: float, multiple: int,
+                 auto_calculate: bool = True, manual_frames: int = 362) -> dict[str, int | float | str | bool]:
+    """Match H3 Resolution Selector: MP × 1024² → ratio → nearest multiple."""
+    duration = min(15.0, max(4.0, float(duration)))
+    megapixels = min(16.0, max(0.1, float(megapixels)))
+    multiple = min(128, max(8, int(multiple)))
+    width_ratio, height_ratio = ASPECT_RATIOS.get(aspect_ratio, ASPECT_RATIOS["9:16"])
+    scale = math.sqrt(megapixels * 1024 * 1024 / (width_ratio * height_ratio))
+    width = round(width_ratio * scale / multiple) * multiple
+    height = round(height_ratio * scale / multiple) * multiple
+    base_frames = max(5, round(duration * 24))
+    calculated_frames = base_frames + (5 - base_frames % 17) % 17
+    frames = calculated_frames if auto_calculate else max(1, int(manual_frames))
+    return {
+        "duration": duration, "aspect_ratio": aspect_ratio, "megapixels": megapixels,
+        "multiple": multiple, "auto_calculate": bool(auto_calculate), "manual_frames": max(1, int(manual_frames)),
+        "width": width, "height": height, "frames": frames,
+    }
+
+
+class H3MediaBoard:
+    """One-output visual media collector.
+
+    The browser extension owns the card UI and persists it into ``media_manifest``.
+    ``prompt`` remains a normal Comfy STRING input, so an upstream text node can be
+    connected without sacrificing the editable textarea in this node.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "prompt": ("STRING", {"multiline": True, "default": ""}),
+                "media_manifest": ("STRING", {"default": "{}", "multiline": False}),
+                "duration": ("FLOAT", {"default": 15.0, "min": 4.0, "max": 15.0, "step": 0.5}),
+                "aspect_ratio": (list(ASPECT_RATIOS.keys()), {"default": "9:16"}),
+                "megapixels": ("FLOAT", {"default": 0.4, "min": 0.1, "max": 16.0, "step": 0.1}),
+                "multiple": ("INT", {"default": 32, "min": 8, "max": 128, "step": 4}),
+                "auto_calculate": ("BOOLEAN", {"default": True, "label_on": "自动计算帧数", "label_off": "手动帧数"}),
+                "manual_frames": ("INT", {"default": 362, "min": 1, "max": 10000, "step": 1}),
+            },
+            # A separate forced input guarantees a visible socket in both the
+            # legacy canvas and Nodes 2.0.  The local textarea remains usable
+            # whenever this optional input is not connected.
+            "optional": {"external_prompt": ("STRING", {"forceInput": True})},
+        }
+
+    RETURN_TYPES = ("H3_MEDIA_BOARD",)
+    RETURN_NAMES = ("media_board",)
+    FUNCTION = "collect"
+    CATEGORY = "H3 / Media"
+
+    def collect(self, prompt: str, media_manifest: str, duration: float, aspect_ratio: str,
+                megapixels: float, multiple: int, auto_calculate: bool, manual_frames: int,
+                external_prompt: str | None = None):
+        manifest = _clean_manifest(media_manifest)
+        manifest["prompt"] = external_prompt if external_prompt is not None else prompt
+        manifest["settings"] = _h3_settings(duration, aspect_ratio, megapixels, multiple, auto_calculate, manual_frames)
+        return {"ui": {"h3_media_board": [manifest]}, "result": (manifest,)}
+
+
+class H3MediaBoardUnpack:
+    """Expose media plus H3 duration, resolution and aligned-frame parameters.
+
+    Empty positions return None.  The frontend marks these outputs inactive according
+    to the linked board manifest, while output indexes stay stable for saved graphs.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"media_board": ("H3_MEDIA_BOARD",)}}
+
+    # Order mirrors H3's reference inputs: images → videos → video audio → audio.
+    # H3's ref_videos ports take IMAGE frame batches, not ComfyUI VIDEO objects.
+    RETURN_TYPES = tuple(
+        ["IMAGE"] * 9 + ["IMAGE"] * 3 + ["AUDIO"] * 3 + ["AUDIO"] * 3
+        + ["STRING", "FLOAT", "INT", "INT", "INT"]
+    )
+    RETURN_NAMES = tuple(
+        [f"image_{index}" for index in range(1, 10)]
+        + [f"video_{index}" for index in range(1, 4)]
+        + [f"video_audio_{index}" for index in range(1, 4)]
+        + [f"audio_{index}" for index in range(1, 4)]
+        + ["prompt", "duration", "width", "height", "frames"]
+    )
+    FUNCTION = "unpack"
+    CATEGORY = "H3 / Media"
+
+    def unpack(self, media_board: dict[str, Any]):
+        manifest = _clean_manifest(media_board)
+        images = [_load_image(item) for item in manifest["image"]]
+        images += [None] * (MAX_COUNTS["image"] - len(images))
+        audios = [_load_audio(item) for item in manifest["audio"]]
+        audios += [None] * (MAX_COUNTS["audio"] - len(audios))
+        videos = [_load_video_frames(item) for item in manifest["video"]]
+        videos += [None] * (MAX_COUNTS["video"] - len(videos))
+        video_audios = [_load_audio(item) for item in manifest["video"]]
+        video_audios += [None] * (MAX_COUNTS["video"] - len(video_audios))
+        settings = media_board.get("settings", {}) if isinstance(media_board, dict) else {}
+        params = _h3_settings(
+            settings.get("duration", 15.0), settings.get("aspect_ratio", "9:16"),
+            settings.get("megapixels", 0.4), settings.get("multiple", 32),
+            settings.get("auto_calculate", True), settings.get("manual_frames", 362),
+        )
+        return tuple(images + videos + video_audios + audios + [
+            str(media_board.get("prompt", "")), params["duration"], params["width"], params["height"], params["frames"],
+        ])
+
+
+NODE_CLASS_MAPPINGS = {
+    "H3MediaBoard": H3MediaBoard,
+    "H3MediaBoardUnpack": H3MediaBoardUnpack,
+}
+
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "H3MediaBoard": "H3 Media Board (9 Image / 3 Audio / 3 Video)",
+    "H3MediaBoardUnpack": "H3 Media Board Outputs",
+}
