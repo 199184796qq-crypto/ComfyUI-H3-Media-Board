@@ -53,6 +53,7 @@ function injectStyle() {
     .h3-media-board .mb-row { display:flex; gap:7px; min-height:78px; }
     .h3-media-board .mb-image-grid { display:grid; grid-template-columns:repeat(3, 294px); gap:7px; }
     .h3-media-board .mb-card { position:relative; box-sizing:border-box; width:294px; flex:0 0 294px; border:1px dashed #687078; border-radius:8px; background:#202428; overflow:hidden; cursor:pointer; }
+    .h3-media-board .mb-card.drag-over { border:2px solid #69ee7a; background:#243129; box-shadow:inset 0 0 0 1px #69ee7a66; }
     .h3-media-board .mb-image { height:132px; } .h3-media-board .mb-audio { height:78px; } .h3-media-board .mb-video { height:116px; }
     .h3-media-board .mb-card.empty { display:flex; align-items:center; justify-content:center; color:#9aa2a9; }
     .h3-media-board .mb-card:not(.empty) { border-style:solid; border-color:#485057; }
@@ -95,6 +96,33 @@ function openPreview(path) {
   document.body.appendChild(overlay);
 }
 
+function kindForFile(file) {
+  const type = String(file?.type || "").toLowerCase();
+  if (type.startsWith("image/")) return "image";
+  if (type.startsWith("audio/")) return "audio";
+  if (type.startsWith("video/")) return "video";
+  const extension = String(file?.name || "").split(".").pop()?.toLowerCase();
+  if (["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif"].includes(extension)) return "image";
+  if (["mp3", "wav", "flac", "m4a", "aac", "ogg", "opus"].includes(extension)) return "audio";
+  if (["mp4", "mov", "webm", "mkv", "avi", "m4v"].includes(extension)) return "video";
+  return null;
+}
+
+function clipboardFiles(event) {
+  const direct = Array.from(event.clipboardData?.files || []);
+  if (direct.length) return direct;
+  return Array.from(event.clipboardData?.items || []).map((item) => item.getAsFile?.()).filter(Boolean);
+}
+
+async function uploadFile(kind, file) {
+  if (!file || kindForFile(file) !== kind) return null;
+  const form = new FormData();
+  form.set("kind", kind);
+  form.set("file", file);
+  const response = await fetch("/h3_media_board/upload", { method: "POST", body: form });
+  return response.ok ? await response.json() : null;
+}
+
 async function chooseAndUpload(kind) {
   const picker = document.createElement("input");
   picker.type = "file";
@@ -102,11 +130,7 @@ async function chooseAndUpload(kind) {
   return await new Promise((resolve) => {
     picker.onchange = async () => {
       if (!picker.files?.[0]) return resolve(null);
-      const form = new FormData();
-      form.set("kind", kind);
-      form.set("file", picker.files[0]);
-      const response = await fetch("/h3_media_board/upload", { method: "POST", body: form });
-      resolve(response.ok ? await response.json() : null);
+      resolve(await uploadFile(kind, picker.files[0]));
     };
     picker.click();
   });
@@ -176,8 +200,31 @@ function makeVideoPlayer(asset) {
 function makeCard(kind, index, asset, update) {
   const card = document.createElement("div");
   card.className = `mb-card mb-${kind}${asset ? "" : " empty"}`;
+  card.tabIndex = 0;
   const badge = document.createElement("span"); badge.className = "mb-index"; badge.textContent = String(index + 1); card.appendChild(badge);
   const select = async () => { const uploaded = await chooseAndUpload(kind); if (uploaded) update(uploaded); };
+  const receiveFiles = async (files) => {
+    const file = Array.from(files || []).find((candidate) => kindForFile(candidate) === kind);
+    if (!file) return;
+    const uploaded = await uploadFile(kind, file);
+    if (uploaded) update(uploaded);
+  };
+  card.ondragover = (event) => {
+    if (Array.from(event.dataTransfer?.files || []).some((file) => kindForFile(file) === kind)) {
+      event.preventDefault(); card.classList.add("drag-over");
+    }
+  };
+  card.ondragleave = () => card.classList.remove("drag-over");
+  card.ondrop = async (event) => {
+    card.classList.remove("drag-over");
+    if (!Array.from(event.dataTransfer?.files || []).some((file) => kindForFile(file) === kind)) return;
+    stop(event); await receiveFiles(event.dataTransfer.files);
+  };
+  card.onpaste = async (event) => {
+    const files = clipboardFiles(event);
+    if (!files.some((file) => kindForFile(file) === kind)) return;
+    stop(event); await receiveFiles(files);
+  };
   if (!asset) { card.textContent = "点击上传文件"; card.prepend(badge); card.onclick = select; return card; }
   if (kind === "image") { const image = new Image(); image.src = viewUrl(asset.path); card.appendChild(image); card.ondblclick = () => openPreview(asset.path); }
   if (kind === "audio") card.appendChild(makeAudioPlayer(asset));
@@ -251,8 +298,9 @@ function createBoard(node) {
   // inside the board so the media and H3 setup stay in one place.
   for (const widget of [manifestWidget, promptWidget, ...Object.values(settingsWidgets)]) { widget.computeSize = () => [0, -4]; widget.draw = () => {}; }
 
-  const root = document.createElement("div"); root.className = "h3-media-board";
+  const root = document.createElement("div"); root.className = "h3-media-board"; root.tabIndex = 0;
   const prompt = document.createElement("textarea"); prompt.placeholder = "提示词（可直接连接上游文本输入）"; prompt.value = promptWidget.value || "";
+  root.onpointerdown = (event) => { if (event.target !== prompt) root.focus({ preventScroll: true }); };
   const persist = (state) => { manifestWidget.value = JSON.stringify(state); node.graph?.setDirtyCanvas(true, true); };
   const render = () => {
     const state = readManifest(manifestWidget); root.replaceChildren();
@@ -270,6 +318,30 @@ function createBoard(node) {
       }
       root.appendChild(row);
     }
+    // Dropping on the node rather than a specific card fills the next free
+    // position for each detected media type.  Pasting behaves the same way.
+    const appendFiles = async (files) => {
+      let changed = false;
+      for (const file of Array.from(files || [])) {
+        const kind = kindForFile(file);
+        if (!kind || state[kind].length >= LIMITS[kind]) continue;
+        const uploaded = await uploadFile(kind, file);
+        if (uploaded) { state[kind].push(uploaded); changed = true; }
+      }
+      if (changed) { persist(state); render(); }
+    };
+    root.ondragover = (event) => {
+      if (Array.from(event.dataTransfer?.files || []).some((file) => kindForFile(file))) event.preventDefault();
+    };
+    root.ondrop = async (event) => {
+      if (!Array.from(event.dataTransfer?.files || []).some((file) => kindForFile(file))) return;
+      stop(event); await appendFiles(event.dataTransfer.files);
+    };
+    root.onpaste = async (event) => {
+      const files = clipboardFiles(event);
+      if (!files.some((file) => kindForFile(file))) return;
+      stop(event); await appendFiles(files);
+    };
     root.appendChild(makeH3SettingsPanel(settingsWidgets, node));
     root.appendChild(prompt);
   };
