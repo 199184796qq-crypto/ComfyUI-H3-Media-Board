@@ -37,10 +37,14 @@ function viewUrl(path) {
 function readManifest(widget) {
   try {
     const parsed = JSON.parse(widget.value || "{}");
-    return Object.fromEntries(Object.keys(LIMITS).map((kind) => [kind, Array.isArray(parsed[kind]) ? parsed[kind] : []]));
+    return Object.fromEntries(Object.keys(LIMITS).map((kind) => [kind, Array.isArray(parsed[kind]) ? parsed[kind].filter(Boolean).slice(0, LIMITS[kind]) : []]));
   } catch (_) {
     return { image: [], audio: [], video: [] };
   }
+}
+
+function compactMedia(state, kind) {
+  state[kind] = Array.isArray(state[kind]) ? state[kind].filter(Boolean).slice(0, LIMITS[kind]) : [];
 }
 
 function injectStyle() {
@@ -209,15 +213,19 @@ function makeCard(kind, index, asset, update) {
     const uploaded = await uploadFile(kind, file);
     if (uploaded) update(uploaded);
   };
-  card.ondragover = (event) => {
-    if (Array.from(event.dataTransfer?.files || []).some((file) => kindForFile(file) === kind)) {
-      event.preventDefault(); card.classList.add("drag-over");
-    }
+  let dragDepth = 0;
+  const acceptsDrop = (event) => Array.from(event.dataTransfer?.files || []).some((file) => kindForFile(file) === kind);
+  card.ondragenter = (event) => {
+    if (!acceptsDrop(event)) return;
+    event.preventDefault(); dragDepth += 1; card.classList.add("drag-over");
   };
-  card.ondragleave = () => card.classList.remove("drag-over");
+  card.ondragover = (event) => {
+    if (acceptsDrop(event)) { event.preventDefault(); card.classList.add("drag-over"); }
+  };
+  card.ondragleave = () => { dragDepth -= 1; if (dragDepth <= 0) { dragDepth = 0; card.classList.remove("drag-over"); } };
   card.ondrop = async (event) => {
-    card.classList.remove("drag-over");
-    if (!Array.from(event.dataTransfer?.files || []).some((file) => kindForFile(file) === kind)) return;
+    dragDepth = 0; card.classList.remove("drag-over");
+    if (!acceptsDrop(event)) return;
     stop(event); await receiveFiles(event.dataTransfer.files);
   };
   card.onpaste = async (event) => {
@@ -308,11 +316,18 @@ function createBoard(node) {
       const title = document.createElement("div"); title.className = "mb-title"; title.textContent = `${LABELS[kind]} · ${LIMITS[kind]}`; root.appendChild(title);
       const row = document.createElement("div");
       // Images are deliberately a 3 × 3 grid. Audio and video stay as three fixed cards in one row.
-      row.className = kind === "image" ? "mb-image-grid" : "mb-row";
+        row.className = kind === "image" ? "mb-image-grid" : "mb-row";
       for (let index = 0; index < LIMITS[kind]; index++) {
         row.appendChild(makeCard(kind, index, state[kind][index], (uploaded) => {
-          if (uploaded) state[kind][index] = uploaded; else state[kind].splice(index, 1);
-          // Deleting uses splice: all later assets immediately renumber and shift forward.
+          compactMedia(state, kind);
+          if (uploaded) {
+            // A filled card is deliberately replaced. Dropping/uploading into
+            // any empty later card appends after the existing consecutive set.
+            if (state[kind][index]) state[kind][index] = uploaded;
+            else state[kind].push(uploaded);
+          } else state[kind].splice(index, 1);
+          // There are never blank numbers: every operation compacts the row.
+          compactMedia(state, kind);
           persist(state); render();
         }));
       }
@@ -324,7 +339,9 @@ function createBoard(node) {
       let changed = false;
       for (const file of Array.from(files || [])) {
         const kind = kindForFile(file);
-        if (!kind || state[kind].length >= LIMITS[kind]) continue;
+        if (!kind) continue;
+        compactMedia(state, kind);
+        if (state[kind].length >= LIMITS[kind]) continue;
         const uploaded = await uploadFile(kind, file);
         if (uploaded) { state[kind].push(uploaded); changed = true; }
       }
