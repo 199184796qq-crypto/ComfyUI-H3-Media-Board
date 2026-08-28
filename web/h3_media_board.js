@@ -101,9 +101,10 @@ function injectStyle() {
     .h3-dynamic-media-board .mb-dynamic-grid .mb-card { width:145px; flex:0 0 145px; }
     .h3-dynamic-media-board .mb-dynamic-grid .mb-image { height:72px; }
     .h3-dynamic-media-board .mb-dynamic-grid .mb-audio { height:60px; }
-    .h3-dynamic-media-board .mb-dynamic-grid .mb-audio-player { grid-template-columns:22px 1fr; gap:5px; padding:19px 6px 14px; }
-    .h3-dynamic-media-board .mb-dynamic-grid .mb-audio-play { width:22px; height:22px; font-size:10px; }
+    .h3-dynamic-media-board .mb-dynamic-grid .mb-audio-player { position:absolute; z-index:4; left:6px; bottom:3px; display:block; width:18px; height:18px; padding:0; }
+    .h3-dynamic-media-board .mb-dynamic-grid .mb-audio-play { display:block; width:18px; height:18px; font-size:9px; }
     .h3-dynamic-media-board .mb-dynamic-grid .mb-audio-player .mb-audio-time, .h3-dynamic-media-board .mb-dynamic-grid .mb-audio-player .mb-audio-seek { display:none; }
+    .h3-dynamic-media-board .mb-dynamic-grid .mb-audio .mb-name { padding-left:30px; }
     .h3-dynamic-media-board .mb-dynamic-grid .mb-card.empty { width:144px; min-width:144px; height:52px; min-height:52px; flex-basis:144px; font-size:11px; }
     .h3-dynamic-media-board .mb-dynamic-grid .mb-card.empty .mb-index { top:5px; left:5px; padding:1px 6px; }
     .h3-dynamic-media-board .mb-dynamic-section-title { display:flex; align-items:center; justify-content:space-between; width:fit-content; margin:10px 0 5px; padding:0; border:0; color:#c9c9c9; background:transparent; font:700 12px system-ui,sans-serif; cursor:pointer; }
