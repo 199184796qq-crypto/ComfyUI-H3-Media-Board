@@ -60,6 +60,32 @@ function compactMedia(state, kind) {
   state[kind] = Array.isArray(state[kind]) ? state[kind].filter(Boolean).slice(0, LIMITS[kind]) : [];
 }
 
+const BOARD_SAVE_PROPERTY = "h3_media_board_saved";
+
+// `nodeCreated` runs while a saved workflow is still being hydrated in some
+// ComfyUI builds.  The board used to render the default empty manifest there,
+// and nothing asked it to redraw after LiteGraph restored widget values.  Keep
+// a named property copy as an authoritative fallback and refresh the DOM only
+// after configuration has completed.
+function restoreBoardWorkflowState(node, configured = null) {
+  if (!node || node.comfyClass !== "H3MediaBoard") return;
+  const saved = configured?.properties?.[BOARD_SAVE_PROPERTY]
+    || node.properties?.[BOARD_SAVE_PROPERTY];
+  const manifestWidget = node.widgets?.find((widget) => widget.name === "media_manifest");
+  const promptWidget = node.widgets?.find((widget) => widget.name === "prompt");
+  if (saved && typeof saved === "object") {
+    if (typeof saved.media_manifest === "string" && manifestWidget) manifestWidget.value = saved.media_manifest;
+    if (typeof saved.prompt === "string" && promptWidget) promptWidget.value = saved.prompt;
+    for (const [name, value] of Object.entries(saved.settings || {})) {
+      const widget = node.widgets?.find((item) => item.name === name);
+      if (widget && value !== undefined) widget.value = value;
+    }
+  }
+  node._h3SetPromptText?.(promptWidget?.value || "");
+  node._h3RenderBoard?.();
+  node.graph?.setDirtyCanvas?.(true, true);
+}
+
 function injectStyle() {
   if (document.getElementById("h3-media-board-style")) return;
   const style = document.createElement("style");
@@ -799,6 +825,10 @@ function makePromptEditor(promptWidget, node, getState, saveBackup) {
     const caret = document.activeElement === editor ? saveSelectionOffset() : null;
     renderText(currentText(), caret); updateMention();
   };
+  shell.setText = (value) => {
+    renderText(String(value || ""));
+    updateMention();
+  };
   shell.disposeReferencePreview = () => {
     hideReferencePreview(); referencePreview.remove();
     document.removeEventListener("keydown", previewKeyChange, true);
@@ -847,7 +877,7 @@ function createBoard(node) {
   const sessionKey = `h3-media-board-live:${node.id}`;
   let sessionSaved = null;
   try { sessionSaved = JSON.parse(sessionStorage.getItem(sessionKey) || "null"); } catch (_) { /* no browser-session backup */ }
-  const persisted = node.properties?.h3_media_board_saved || sessionSaved;
+  const persisted = node.properties?.[BOARD_SAVE_PROPERTY] || sessionSaved;
   if (persisted && typeof persisted === "object") {
     if (typeof persisted.media_manifest === "string") manifestWidget.value = persisted.media_manifest;
     if (typeof persisted.prompt === "string") promptWidget.value = persisted.prompt;
@@ -864,7 +894,7 @@ function createBoard(node) {
       prompt: promptWidget.value || "",
       settings: Object.fromEntries(Object.entries(settingsWidgets).map(([name, widget]) => [name, widget.value])),
     };
-    node.properties.h3_media_board_saved = backup;
+    node.properties[BOARD_SAVE_PROPERTY] = backup;
     try { sessionStorage.setItem(sessionKey, JSON.stringify(backup)); } catch (_) { /* storage can be unavailable */ }
   };
   const prompt = makePromptEditor(promptWidget, node, () => readManifest(manifestWidget), saveBackup);
@@ -961,6 +991,11 @@ function createBoard(node) {
   const priorSerialize = node.onSerialize;
   node.onSerialize = function (...args) {
     saveBackup();
+    const serialized = args[0];
+    if (serialized && typeof serialized === "object") {
+      serialized.properties = serialized.properties || {};
+      serialized.properties[BOARD_SAVE_PROPERTY] = node.properties?.[BOARD_SAVE_PROPERTY];
+    }
     return priorSerialize?.apply(this, args);
   };
   const persist = (state) => { manifestWidget.value = JSON.stringify(state); saveBackup(); node.graph?.setDirtyCanvas(true, true); };
@@ -1063,6 +1098,8 @@ function createBoard(node) {
     prompt.refreshReferences?.();
     root.appendChild(prompt);
   };
+  node._h3RenderBoard = render;
+  node._h3SetPromptText = (value) => prompt.setText?.(value);
   render();
   // The Noise controls added below the H3 settings need real node height;
   // otherwise the flexible prompt editor can paint past the node boundary.
@@ -1553,6 +1590,18 @@ function decorateMultiTimeGuide(node) {
 
 app.registerExtension({
   name: "h3.media_board",
+  beforeRegisterNodeDef(nodeType, nodeData) {
+    if (nodeData?.name !== "H3MediaBoard") return;
+    const priorConfigure = nodeType.prototype.onConfigure;
+    nodeType.prototype.onConfigure = function (...args) {
+      const result = priorConfigure?.apply(this, args);
+      // Defer one frame: LiteGraph applies positional widget values during
+      // configure, and the deferred pass guarantees the DOM card grid sees
+      // the final restored values instead of its initial empty defaults.
+      requestAnimationFrame(() => restoreBoardWorkflowState(this, args[0]));
+      return result;
+    };
+  },
   nodeCreated(node) {
     if (node.comfyClass === "H3MediaBoard") createBoard(node);
     if (node.comfyClass === "H3MediaBoardUnpack") decorateUnpacker(node);
@@ -1560,5 +1609,10 @@ app.registerExtension({
     if (node.comfyClass === "H3VideoModeControl") decorateVideoModeControl(node);
     if (node.comfyClass === "H3SecondPassPreparation") decorateSecondPassPreparation(node);
     if (node.comfyClass === "H3MultiTimeGuide") decorateMultiTimeGuide(node);
+  },
+  loadedGraphNode(node) {
+    if (node.comfyClass === "H3MediaBoard") {
+      requestAnimationFrame(() => restoreBoardWorkflowState(node));
+    }
   },
 });
