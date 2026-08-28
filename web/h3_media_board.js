@@ -208,6 +208,8 @@ function injectStyle() {
     .mb-reference-preview-title { display:block; margin-bottom:5px; overflow:hidden; color:#ffadb2; text-overflow:ellipsis; white-space:nowrap; font-weight:800; }
     .mb-reference-preview img, .mb-reference-preview video { display:block; width:270px; max-height:180px; object-fit:contain; background:#08090a; border-radius:5px; }
     .mb-reference-preview audio { display:block; width:270px; }
+    .mb-card-image-preview { position:fixed; z-index:10006; display:grid; place-items:center; max-width:372px; max-height:332px; padding:6px; overflow:hidden; border:1px solid #5f7781; border-radius:8px; background:#11161aeF; box-shadow:0 10px 26px #000c; pointer-events:none; }
+    .mb-card-image-preview img { display:block; max-width:min(360px,calc(100vw - 32px)); max-height:min(320px,calc(100vh - 32px)); width:auto; height:auto; object-fit:contain; border-radius:4px; }
     .mb-preview { position:fixed; z-index:10000; inset:0; display:grid; place-items:center; background:#000b; } .mb-preview img { max-width:90vw; max-height:90vh; }
   `;
   document.head.appendChild(style);
@@ -221,6 +223,41 @@ function openPreview(path) {
   overlay.append(image);
   overlay.onclick = () => overlay.remove();
   document.body.appendChild(overlay);
+}
+
+let cardImageHoverPreview = null;
+let cardImageHoverEvent = null;
+
+function hideCardImageHoverPreview() {
+  cardImageHoverEvent = null;
+  cardImageHoverPreview?.remove();
+  cardImageHoverPreview = null;
+}
+
+function placeCardImageHoverPreview(event) {
+  if (!cardImageHoverPreview || !event) return;
+  const gap = 14;
+  const rect = cardImageHoverPreview.getBoundingClientRect();
+  const width = rect.width || 372;
+  const height = rect.height || 220;
+  const left = Math.max(6, Math.min(event.clientX + gap, window.innerWidth - width - 6));
+  const top = Math.max(6, Math.min(event.clientY + gap, window.innerHeight - height - 6));
+  cardImageHoverPreview.style.left = `${left}px`;
+  cardImageHoverPreview.style.top = `${top}px`;
+}
+
+function showCardImageHoverPreview(path, event) {
+  hideCardImageHoverPreview();
+  cardImageHoverEvent = event;
+  const preview = document.createElement("div");
+  preview.className = "mb-card-image-preview";
+  const image = new Image();
+  image.src = viewUrl(path);
+  image.onload = () => placeCardImageHoverPreview(cardImageHoverEvent);
+  preview.appendChild(image);
+  document.body.appendChild(preview);
+  cardImageHoverPreview = preview;
+  placeCardImageHoverPreview(event);
 }
 
 function kindForFile(file) {
@@ -427,7 +464,13 @@ function makeCard(kind, index, asset, update, config = {}) {
     stop(event); await receiveFiles(files);
   };
   if (!asset) { card.textContent = "点击上传文件"; card.prepend(badge); if (frameRole) card.appendChild(frameRole); card.onclick = select; return card; }
-  if (kind === "image") { const image = new Image(); image.src = viewUrl(asset.path); card.appendChild(image); card.ondblclick = () => openPreview(asset.path); }
+  if (kind === "image") {
+    const image = new Image(); image.src = viewUrl(asset.path); card.appendChild(image);
+    image.onpointerenter = (event) => showCardImageHoverPreview(asset.path, event);
+    image.onpointermove = placeCardImageHoverPreview;
+    image.onpointerleave = hideCardImageHoverPreview;
+    card.ondblclick = () => openPreview(asset.path);
+  }
   if (kind === "audio") card.appendChild(makeAudioPlayer(asset));
   if (kind === "video") card.appendChild(makeVideoPlayer(asset));
   const replace = document.createElement("button"); replace.className = "mb-replace"; replace.textContent = "替换"; replace.onclick = (e) => { stop(e); select(); }; card.appendChild(replace);
