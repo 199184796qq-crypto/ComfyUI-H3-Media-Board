@@ -2,7 +2,7 @@ import { app } from "../../scripts/app.js";
 
 const LIMITS = { image: 9, audio: 3, video: 3 };
 const DYNAMIC_MEDIA_LIMIT = 64;
-const DYNAMIC_MEDIA_COLUMNS = 6;
+const DYNAMIC_MEDIA_COLUMNS = 3;
 const LABELS = { image: "参考图片", audio: "参考音频", video: "参考视频" };
 const ACCEPTS = { image: "image/*", audio: "audio/*", video: "video/*" };
 const H3_RATIOS = {
@@ -96,7 +96,7 @@ function injectStyle() {
     /* Media, H3 settings, Noise and the prompt must all remain inside the node.
        Extra vertical room is intentionally assigned to the prompt textarea. */
     .h3-media-board { display:flex; flex-direction:column; box-sizing:border-box; width:100%; height:100%; min-width:900px; max-width:900px; min-height:1170px; color:#ddd; font:12px system-ui, sans-serif; user-select:none; }
-    .h3-dynamic-media-board { min-height:0; height:auto; padding-bottom:8px; }
+    .h3-dynamic-media-board { min-width:0; min-height:0; width:auto; height:auto; padding-bottom:8px; }
     .h3-dynamic-media-board .mb-dynamic-grid { display:flex; flex-wrap:wrap; gap:7px; }
     .h3-dynamic-media-board .mb-dynamic-grid .mb-card { width:145px; flex:0 0 145px; }
     .h3-dynamic-media-board .mb-dynamic-grid .mb-image { height:72px; }
@@ -1268,8 +1268,13 @@ function createDynamicMediaBoard(node) {
     const imageHeight = sectionHeight(state.image.length, 75);
     const audioHeight = node._dynamicAudioCollapsed ? 0 : sectionHeight(state.audio.length, 63);
     const height = Math.max(170, 54 + imageHeight + 30 + audioHeight);
+    const visibleImages = Math.min(DYNAMIC_MEDIA_LIMIT, state.image.length + 1);
+    const visibleAudio = node._dynamicAudioCollapsed ? 0 : Math.min(DYNAMIC_MEDIA_LIMIT, state.audio.length + 1);
+    const columns = Math.max(1, Math.min(DYNAMIC_MEDIA_COLUMNS, Math.max(visibleImages, visibleAudio)));
+    const width = Math.max(250, Math.min(930, 64 + columns * 145 + (columns - 1) * 7));
     node._dynamicMediaAutoHeight = height;
-    node.setSize?.([930, height]);
+    node._dynamicMediaAutoWidth = width;
+    node.setSize?.([width, height]);
   };
   node._dynamicMediaRender = render;
   node._dynamicMediaRestore = (configured = null) => {
@@ -1305,24 +1310,24 @@ function createDynamicMediaBoard(node) {
   // This board's size is data-driven.  Disable the user resize handle and
   // clamp any legacy canvas resize gesture back to the current card layout.
   node.resizable = false;
-  node.min_size = [930, 170];
-  node.min_width = 930;
+  node.min_size = [250, 170];
+  node.min_width = 250;
   node.max_width = 930;
   const priorResize = node.onResize;
   node.onResize = function (size) {
-    size[0] = 930;
+    size[0] = this._dynamicMediaAutoWidth || 250;
     size[1] = this._dynamicMediaAutoHeight || 170;
     priorResize?.call(this, size);
   };
   node.addDOMWidget("dynamic_media_board_ui", "DYNAMIC_MEDIA_BOARD_UI", root, {
     getValue: () => "dynamic-media-board",
-    getMinHeight: () => Math.max(240, node.size[1] - 48),
-    getHeight: () => Math.max(240, node.size[1] - 48),
+    getMinHeight: () => Math.max(150, node.size[1] - 48),
+    getHeight: () => Math.max(150, node.size[1] - 48),
   });
   // Node creation starts with backend-reserved outputs.  They can temporarily
   // inflate LiteGraph's minimum height, so apply the measured height again
   // after the placeholder sockets and resize constraints are in place.
-  node.setSize?.([930, node._dynamicMediaAutoHeight || 170]);
+  node.setSize?.([node._dynamicMediaAutoWidth || 250, node._dynamicMediaAutoHeight || 170]);
 }
 
 function decorateUnpacker(node) {
