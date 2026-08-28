@@ -129,7 +129,20 @@ function injectStyle() {
     .h3-media-board .mb-noise-action { width:132px; height:29px; padding:0 8px; border:1px solid #645588; border-radius:5px; color:#e9e2ff; background:#332b48; cursor:pointer; font:11px system-ui, sans-serif; white-space:nowrap; }
     .h3-media-board .mb-noise-action:hover { border-color:#c7b2ff; background:#443862; }
     .h3-media-board .mb-noise-status { grid-column:1 / -1; justify-self:start; width:fit-content; max-width:100%; padding:6px 8px; border-left:3px solid #b998ff; border-radius:4px; color:#d8ccff; background:#211d30; font-size:11px; }
-    .h3-media-board textarea { display:block; box-sizing:border-box; flex:1 1 auto; width:100%; min-height:145px; margin:9px 0 4px; padding:8px; resize:none; color:#ececec; background:#15181b; border:1px solid #586168; border-radius:6px; font:12px ui-monospace, Consolas, monospace; }
+    .h3-media-board .mb-prompt-shell { position:relative; display:flex; flex:1 1 auto; min-height:145px; margin:9px 0 4px; }
+    .h3-media-board .mb-prompt-editor { box-sizing:border-box; width:100%; min-height:145px; padding:8px; overflow:auto; color:#ececec; background:#15181b; border:1px solid #586168; border-radius:6px; outline:none; white-space:pre-wrap; overflow-wrap:anywhere; user-select:text; font:12px ui-monospace, Consolas, monospace; }
+    .h3-media-board .mb-prompt-editor:focus { border-color:#78d7e3; box-shadow:0 0 0 2px #78d7e322; }
+    .h3-media-board .mb-prompt-editor:empty::before { content:attr(data-placeholder); color:#707981; pointer-events:none; }
+    .h3-media-board .mb-media-ref { color:#ff626b; font-weight:800; text-shadow:0 0 8px #ff4e5a55; }
+    .h3-media-board .mb-dialogue { color:#ffd45d; font-weight:700; text-shadow:0 0 8px #ffcc4550; }
+    .h3-media-board .mb-mention-menu { position:absolute; z-index:20; width:268px; max-height:156px; overflow:auto; padding:4px; border:1px solid #75454b; border-radius:7px; background:#211a1deF; box-shadow:0 8px 20px #000b; user-select:none; }
+    .h3-media-board .mb-mention-option { display:grid; grid-template-columns:36px minmax(0,1fr) auto; align-items:center; gap:7px; width:100%; min-height:38px; padding:4px; border:0; border-radius:5px; color:#e9e1e3; background:transparent; text-align:left; cursor:pointer; font:11px system-ui,sans-serif; }
+    .h3-media-board .mb-mention-option:hover, .h3-media-board .mb-mention-option.active { background:#4a2a31; }
+    .h3-media-board .mb-mention-thumb { display:grid; place-items:center; width:36px; height:30px; overflow:hidden; border-radius:4px; color:#ffc5c8; background:#30252a; font-size:15px; }
+    .h3-media-board .mb-mention-thumb img { width:100%; height:100%; object-fit:cover; }
+    .h3-media-board .mb-mention-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .h3-media-board .mb-mention-token { color:#ff8188; font:10px ui-monospace,Consolas,monospace; white-space:nowrap; }
+    .h3-media-board .mb-mention-empty { padding:8px; color:#aa9da0; font-size:11px; }
     .mb-preview { position:fixed; z-index:10000; inset:0; display:grid; place-items:center; background:#000b; } .mb-preview img { max-width:90vw; max-height:90vh; }
   `;
   document.head.appendChild(style);
@@ -469,6 +482,220 @@ function makeNoisePanel(widgets, node) {
   return panel;
 }
 
+// A textarea cannot colour individual references.  This small contenteditable
+// editor keeps the workflow value as ordinary plain text while giving existing
+// media tags a visual treatment and an @ picker.
+function makePromptEditor(promptWidget, node, getState, saveBackup) {
+  const shell = document.createElement("div");
+  shell.className = "mb-prompt-shell";
+  const editor = document.createElement("div");
+  editor.className = "mb-prompt-editor";
+  editor.contentEditable = "true";
+  editor.spellcheck = false;
+  editor.dataset.placeholder = "提示词（可直接连接上游文本输入；输入 @ 可引用素材）";
+  const menu = document.createElement("div");
+  menu.className = "mb-mention-menu";
+  menu.hidden = true;
+  shell.append(editor, menu);
+
+  let mention = null;
+  let activeIndex = 0;
+  // innerText preserves the line breaks users create while writing prompts.
+  const currentText = () => editor.innerText || "";
+  const saveSelectionOffset = () => {
+    const selection = window.getSelection?.();
+    if (!selection?.rangeCount || !editor.contains(selection.anchorNode)) return currentText().length;
+    const range = selection.getRangeAt(0).cloneRange();
+    range.selectNodeContents(editor);
+    try { range.setEnd(selection.anchorNode, selection.anchorOffset); } catch (_) { return currentText().length; }
+    return range.toString().length;
+  };
+  const rangeAtOffset = (offset) => {
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+    let remaining = Math.max(0, Number(offset) || 0);
+    let textNode = walker.nextNode();
+    while (textNode && remaining > textNode.nodeValue.length) {
+      remaining -= textNode.nodeValue.length;
+      textNode = walker.nextNode();
+    }
+    const range = document.createRange();
+    if (textNode) range.setStart(textNode, Math.min(remaining, textNode.nodeValue.length));
+    else range.selectNodeContents(editor), range.collapse(false);
+    range.collapse(true);
+    return range;
+  };
+  const restoreSelectionOffset = (offset) => {
+    const selection = window.getSelection?.();
+    if (!selection) return;
+    const range = rangeAtOffset(offset);
+    selection.removeAllRanges(); selection.addRange(range);
+  };
+  const mediaItems = () => {
+    const state = getState();
+    const definitions = [
+      ["image", "Picture", "图片"], ["audio", "Audio", "音频"], ["video", "Video", "视频"],
+    ];
+    return definitions.flatMap(([kind, tag, label]) => (state[kind] || []).map((asset, index) => ({
+      kind, asset, index: index + 1, label: `${label} ${index + 1}`, token: `<${tag} ${index + 1}>`,
+    })));
+  };
+  const isAvailableReference = (type, index) => {
+    const kind = ({ Picture: "image", Audio: "audio", Video: "video" })[type];
+    return Boolean(kind && getState()[kind]?.[Number(index) - 1]);
+  };
+  const dialogueRanges = (value) => {
+    const ranges = [];
+    const add = (start, end) => { if (end > start) ranges.push([start, end]); };
+    // Quotes are the dependable general form.  The labelled-line form also
+    // covers prompts written as `对白：...` / `Dialogue: ...` without quotes.
+    // H3 prompts commonly wrap spoken dialogue in <d>...</d>.  The tag is
+    // case-insensitive, so both <d> and <D> receive the same yellow treatment.
+    for (const pattern of [/<d>[^]*?<\/d>/gi, /“[^”]*”/g, /「[^」]*」/g, /『[^』]*』/g, /"[^"\r\n]*"/g]) {
+      for (let match = pattern.exec(value); match; match = pattern.exec(value)) add(match.index, match.index + match[0].length);
+    }
+    // Allow the dialogue label anywhere on a line, not just at the beginning:
+    // e.g. `镜头说明。台词：秋天真美。`.
+    const labelled = /(?:对白|台词|对话|dialogue|speech)\s*[：:]\s*([^\r\n]+)/gim;
+    for (let match = labelled.exec(value); match; match = labelled.exec(value)) {
+      const content = match[1] || "";
+      add(match.index + match[0].lastIndexOf(content), match.index + match[0].length);
+    }
+    return ranges.sort((a, b) => a[0] - b[0]).reduce((merged, range) => {
+      const previous = merged.at(-1);
+      if (previous && range[0] <= previous[1]) previous[1] = Math.max(previous[1], range[1]);
+      else merged.push(range);
+      return merged;
+    }, []);
+  };
+  const renderText = (value, caret = null) => {
+    const fragment = document.createDocumentFragment();
+    const matcher = /<(Picture|Audio|Video)\s+([1-9]\d*)>/g;
+    const dialogue = dialogueRanges(value);
+    const appendText = (text, offset) => {
+      let position = 0;
+      const end = offset + text.length;
+      for (const [rangeStart, rangeEnd] of dialogue) {
+        const start = Math.max(offset, rangeStart); const finish = Math.min(end, rangeEnd);
+        if (finish <= start) continue;
+        if (start > offset + position) fragment.appendChild(document.createTextNode(text.slice(position, start - offset)));
+        const spoken = document.createElement("span"); spoken.className = "mb-dialogue";
+        // Inline fallback makes dialogue remain visibly yellow even when a
+        // browser keeps an older cached stylesheet during a ComfyUI refresh.
+        spoken.style.color = "#ffd45d"; spoken.style.fontWeight = "700";
+        spoken.textContent = text.slice(start - offset, finish - offset); fragment.appendChild(spoken);
+        position = finish - offset;
+      }
+      if (position < text.length) fragment.appendChild(document.createTextNode(text.slice(position)));
+    };
+    let cursor = 0;
+    for (let match = matcher.exec(value); match; match = matcher.exec(value)) {
+      if (match.index > cursor) appendText(value.slice(cursor, match.index), cursor);
+      if (isAvailableReference(match[1], match[2])) {
+        const reference = document.createElement("span");
+        reference.className = "mb-media-ref"; reference.textContent = match[0]; fragment.appendChild(reference);
+      } else fragment.appendChild(document.createTextNode(match[0]));
+      cursor = match.index + match[0].length;
+    }
+    if (cursor < value.length) appendText(value.slice(cursor), cursor);
+    editor.replaceChildren(fragment);
+    if (caret != null && document.activeElement === editor) restoreSelectionOffset(caret);
+  };
+  const hideMenu = () => { menu.hidden = true; mention = null; activeIndex = 0; };
+  const drawMenu = () => {
+    if (!mention) { hideMenu(); return; }
+    const query = mention.query.toLowerCase();
+    const options = mediaItems().filter((item) => `${item.label} ${item.token} ${item.asset?.name || ""}`.toLowerCase().includes(query));
+    menu.replaceChildren(); menu.hidden = false;
+    // Place the picker at the active @ / caret instead of anchoring it to the
+    // bottom of a long prompt editor.  Keep it narrow and make the list itself
+    // scroll when there are many assets.
+    const caretRect = rangeAtOffset(mention.end).getBoundingClientRect();
+    const shellRect = shell.getBoundingClientRect();
+    // The complete node is CSS-transformed by the canvas zoom.  Rects are in
+    // screen pixels, while `left` / `top` are local CSS pixels, so convert
+    // between those two coordinate systems before positioning the popup.
+    const scaleX = shell.offsetWidth ? shellRect.width / shell.offsetWidth : 1;
+    const scaleY = shell.offsetHeight ? shellRect.height / shell.offsetHeight : 1;
+    const menuWidth = 278;
+    let left = (caretRect.left - shellRect.left) / scaleX;
+    let top = (caretRect.bottom - shellRect.top) / scaleY + 4;
+    left = Math.max(4, Math.min(left, shell.clientWidth - menuWidth - 4));
+    if (caretRect.bottom + 164 * scaleY > window.innerHeight && caretRect.top - 164 * scaleY > 0) top = (caretRect.top - shellRect.top) / scaleY - 164;
+    menu.style.left = `${left}px`; menu.style.top = `${Math.max(4, top)}px`;
+    if (!options.length) {
+      const empty = document.createElement("div"); empty.className = "mb-mention-empty"; empty.textContent = "没有匹配的已上传素材"; menu.appendChild(empty); return;
+    }
+    activeIndex = Math.min(activeIndex, options.length - 1);
+    options.forEach((item, index) => {
+      const option = document.createElement("button"); option.type = "button";
+      option.className = `mb-mention-option${index === activeIndex ? " active" : ""}`;
+      const thumb = document.createElement("span"); thumb.className = "mb-mention-thumb";
+      if (item.kind === "image") { const image = new Image(); image.src = viewUrl(item.asset.path); image.alt = item.label; thumb.appendChild(image); }
+      else thumb.textContent = item.kind === "audio" ? "♫" : "▶";
+      const label = document.createElement("span"); label.className = "mb-mention-label"; label.textContent = item.asset?.name || item.label;
+      const token = document.createElement("span"); token.className = "mb-mention-token"; token.textContent = item.token;
+      option.append(thumb, label, token);
+      option.onmousedown = (event) => { event.preventDefault(); pick(item); };
+      menu.appendChild(option);
+    });
+    mention.options = options;
+  };
+  const updateMention = () => {
+    if (document.activeElement !== editor) { hideMenu(); return; }
+    const caret = saveSelectionOffset();
+    const before = currentText().slice(0, caret);
+    const match = before.match(/@([^\s@<>]*)$/);
+    if (!match) { hideMenu(); return; }
+    mention = { start: caret - match[0].length, end: caret, query: match[1], options: [] };
+    drawMenu();
+  };
+  const commit = () => {
+    const value = currentText();
+    promptWidget.value = value;
+    promptWidget.callback?.(value);
+    saveBackup(); node.graph?.setDirtyCanvas(true, true);
+  };
+  const pick = (item) => {
+    if (!mention) return;
+    const value = currentText();
+    const next = value.slice(0, mention.start) + item.token + value.slice(mention.end);
+    const caret = mention.start + item.token.length;
+    hideMenu(); renderText(next, caret); commit(); editor.focus({ preventScroll: true }); restoreSelectionOffset(caret);
+  };
+  editor.oninput = () => {
+    const caret = saveSelectionOffset(); const value = currentText();
+    renderText(value, caret); commit(); updateMention();
+  };
+  editor.onpaste = (event) => {
+    const pasted = event.clipboardData?.getData("text/plain");
+    if (typeof pasted !== "string" || !pasted) return;
+    event.preventDefault(); event.stopPropagation();
+    const selection = window.getSelection?.(); const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    if (!range || !editor.contains(range.commonAncestorContainer)) return;
+    range.deleteContents(); const text = document.createTextNode(pasted); range.insertNode(text);
+    range.setStartAfter(text); range.collapse(true); selection.removeAllRanges(); selection.addRange(range);
+    editor.oninput();
+  };
+  editor.onkeydown = (event) => {
+    if (menu.hidden || !mention) return;
+    const options = mention.options || [];
+    if (event.key === "Escape") { event.preventDefault(); hideMenu(); return; }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      if (!options.length) return;
+      event.preventDefault(); activeIndex = (activeIndex + (event.key === "ArrowDown" ? 1 : options.length - 1)) % options.length; drawMenu(); return;
+    }
+    if ((event.key === "Enter" || event.key === "Tab") && options[activeIndex]) { event.preventDefault(); pick(options[activeIndex]); }
+  };
+  editor.onfocus = () => updateMention();
+  editor.onblur = () => setTimeout(hideMenu, 120);
+  shell.refreshReferences = () => {
+    const caret = document.activeElement === editor ? saveSelectionOffset() : null;
+    renderText(currentText(), caret); updateMention();
+  };
+  renderText(String(promptWidget.value || ""));
+  return shell;
+}
+
 function createBoard(node) {
   if (node._h3BoardCreated) return;
   injectStyle();
@@ -518,8 +745,6 @@ function createBoard(node) {
   }
 
   const root = document.createElement("div"); root.className = "h3-media-board"; root.tabIndex = 0;
-  const prompt = document.createElement("textarea"); prompt.placeholder = "提示词（可直接连接上游文本输入）"; prompt.value = promptWidget.value || "";
-  root.onpointerdown = (event) => { if (event.target !== prompt) root.focus({ preventScroll: true }); };
   const saveBackup = () => {
     node.properties = node.properties || {};
     const backup = {
@@ -530,6 +755,57 @@ function createBoard(node) {
     node.properties.h3_media_board_saved = backup;
     try { sessionStorage.setItem(sessionKey, JSON.stringify(backup)); } catch (_) { /* storage can be unavailable */ }
   };
+  const prompt = makePromptEditor(promptWidget, node, () => readManifest(manifestWidget), saveBackup);
+  root.onpointerdown = (event) => { if (!prompt.contains(event.target)) root.focus({ preventScroll: true }); };
+  // DOM widgets sit above LiteGraph's canvas, so their children normally eat
+  // the wheel event.  Relay it to the real canvas and keep zoom behaviour the
+  // same whether the pointer is on a card, the prompt, or a settings control.
+  root.addEventListener("wheel", (event) => {
+    const canvasElement = app.canvas?.canvas;
+    if (!canvasElement) return;
+    event.preventDefault(); event.stopPropagation();
+    canvasElement.dispatchEvent(new WheelEvent("wheel", {
+      bubbles: true, cancelable: true,
+      clientX: event.clientX, clientY: event.clientY,
+      screenX: event.screenX, screenY: event.screenY,
+      deltaX: event.deltaX, deltaY: event.deltaY, deltaZ: event.deltaZ,
+      deltaMode: event.deltaMode, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey,
+      altKey: event.altKey, metaKey: event.metaKey,
+    }));
+  }, { passive: false });
+  // Middle-button dragging is the canvas pan gesture.  Relay it from the DOM
+  // board to LiteGraph as well, including movement after the cursor leaves the
+  // node, so panning feels exactly like dragging an empty canvas area.
+  let middlePanning = false;
+  const relayCanvasMouse = (type, event, buttons) => {
+    const canvasElement = app.canvas?.canvas;
+    if (!canvasElement) return;
+    canvasElement.dispatchEvent(new MouseEvent(type, {
+      bubbles: true, cancelable: true, button: type === "mousemove" ? 0 : 1, buttons,
+      clientX: event.clientX, clientY: event.clientY, screenX: event.screenX, screenY: event.screenY,
+      ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, metaKey: event.metaKey,
+    }));
+  };
+  const stopMiddlePan = () => {
+    middlePanning = false; root.style.cursor = "";
+    document.removeEventListener("mousemove", relayMiddleMove, true);
+    document.removeEventListener("mouseup", relayMiddleUp, true);
+  };
+  const relayMiddleMove = (event) => {
+    if (!middlePanning || !event.isTrusted) return;
+    event.preventDefault(); event.stopImmediatePropagation(); relayCanvasMouse("mousemove", event, 4);
+  };
+  const relayMiddleUp = (event) => {
+    if (!middlePanning || !event.isTrusted) return;
+    event.preventDefault(); event.stopImmediatePropagation(); relayCanvasMouse("mouseup", event, 0); stopMiddlePan();
+  };
+  root.addEventListener("mousedown", (event) => {
+    if (event.button !== 1) return;
+    event.preventDefault(); event.stopPropagation(); middlePanning = true; root.style.cursor = "grabbing";
+    relayCanvasMouse("mousedown", event, 4);
+    document.addEventListener("mousemove", relayMiddleMove, true);
+    document.addEventListener("mouseup", relayMiddleUp, true);
+  }, true);
   node._h3SaveBackup = saveBackup;
   const priorExecuted = node.onExecuted;
   node.onExecuted = function (message, ...args) {
@@ -589,6 +865,7 @@ function createBoard(node) {
   document.addEventListener("drop", captureDrop, true);
   const priorRemoved = node.onRemoved;
   node.onRemoved = function (...args) {
+    stopMiddlePan();
     document.removeEventListener("dragover", captureDragOver, true);
     document.removeEventListener("drop", captureDrop, true);
     priorRemoved?.apply(this, args);
@@ -643,9 +920,9 @@ function createBoard(node) {
     };
     root.appendChild(makeH3SettingsPanel(settingsWidgets, node));
     root.appendChild(makeNoisePanel(settingsWidgets, node));
+    prompt.refreshReferences?.();
     root.appendChild(prompt);
   };
-  prompt.oninput = () => { promptWidget.value = prompt.value; promptWidget.callback?.(prompt.value); saveBackup(); node.graph?.setDirtyCanvas(true, true); };
   render();
   // The Noise controls added below the H3 settings need real node height;
   // otherwise the flexible prompt editor can paint past the node boundary.
@@ -669,7 +946,7 @@ function createBoard(node) {
     getValue: () => "media-board",
     getMinHeight: () => 1170,
     getHeight: () => Math.max(1170, node.size[1] - 48),
-    afterResize: () => { prompt.style.minHeight = "145px"; },
+    afterResize: () => { prompt.querySelector(".mb-prompt-editor").style.minHeight = "145px"; },
   });
   node.size = [Math.max(minSize[0], node.size[0]), Math.max(minSize[1], node.size[1])];
   node.setSize?.(node.size);
