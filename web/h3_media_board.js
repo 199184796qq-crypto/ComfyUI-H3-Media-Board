@@ -107,8 +107,10 @@ function injectStyle() {
     .h3-dynamic-media-board .mb-dynamic-grid .mb-audio .mb-name { padding-left:30px; }
     .h3-dynamic-media-board .mb-dynamic-grid .mb-card.empty { width:144px; min-width:144px; height:52px; min-height:52px; flex-basis:144px; font-size:11px; }
     .h3-dynamic-media-board .mb-dynamic-grid .mb-card.empty .mb-index { top:5px; left:5px; padding:1px 6px; }
-    .h3-dynamic-media-board .mb-dynamic-resize { margin-top:11px; padding:8px; border:1px solid #46606b; border-radius:7px; background:#172127; }
-    .h3-dynamic-media-board .mb-dynamic-resize-title { margin-bottom:7px; color:#d7edf4; font-size:12px; font-weight:800; }
+    .h3-dynamic-media-board .mb-dynamic-resize { margin-top:11px; padding:8px 0 0; border-top:1px solid #46606b; background:transparent; }
+    .h3-dynamic-media-board .mb-dynamic-resize-title { display:flex; align-items:center; width:100%; margin:0 0 7px; padding:0; border:0; color:#d7edf4; background:transparent; font:800 12px system-ui,sans-serif; text-align:left; cursor:pointer; }
+    .h3-dynamic-media-board .mb-dynamic-resize-title:hover { color:#eefbff; }
+    .h3-dynamic-media-board .mb-dynamic-resize-arrow { margin-right:6px; color:#88a8b3; font-size:11px; }
     .h3-dynamic-media-board .mb-dynamic-resize-hint { margin-left:6px; color:#8ea8b1; font-size:10px; font-weight:400; }
     .h3-dynamic-media-board .mb-dynamic-resize-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
     .h3-dynamic-media-board .mb-dynamic-resize-field { display:flex; flex-direction:column; gap:3px; min-width:0; color:#9fb2ba; font-size:10px; }
@@ -1251,6 +1253,7 @@ function createDynamicMediaBoard(node) {
     if (resizeWidgets[name] && value !== undefined) resizeWidgets[name].value = value;
   }
   node._dynamicAudioCollapsed = Boolean(saved?.audio_collapsed);
+  node._dynamicResizeCollapsed = Boolean(saved?.resize_collapsed);
   const root = document.createElement("div");
   root.className = "h3-media-board h3-dynamic-media-board";
   root.tabIndex = 0;
@@ -1284,6 +1287,7 @@ function createDynamicMediaBoard(node) {
     node.properties[DYNAMIC_MEDIA_SAVE_PROPERTY] = {
       media_manifest: manifestWidget.value,
       audio_collapsed: Boolean(node._dynamicAudioCollapsed),
+      resize_collapsed: Boolean(node._dynamicResizeCollapsed),
       resize_settings: resizeSettings(),
     };
     node.graph?.setDirtyCanvas?.(true, true);
@@ -1291,14 +1295,28 @@ function createDynamicMediaBoard(node) {
   const appendResizePanel = (state) => {
     const panel = document.createElement("div");
     panel.className = "mb-dynamic-resize";
-    const title = document.createElement("div");
+    const title = document.createElement("button");
+    title.type = "button";
     title.className = "mb-dynamic-resize-title";
-    title.textContent = "统一图像缩放";
+    const arrow = document.createElement("span");
+    arrow.className = "mb-dynamic-resize-arrow";
+    arrow.textContent = node._dynamicResizeCollapsed ? "▸" : "▾";
+    title.appendChild(arrow);
+    title.append(document.createTextNode("统一图像缩放"));
     const hint = document.createElement("span");
     hint.className = "mb-dynamic-resize-hint";
     hint.textContent = "所有图片输出均按此设置处理";
     title.appendChild(hint);
+    title.onclick = (event) => {
+      stop(event);
+      node._dynamicResizeCollapsed = !node._dynamicResizeCollapsed;
+      persist(state); render();
+    };
     panel.appendChild(title);
+    if (node._dynamicResizeCollapsed) {
+      root.appendChild(panel);
+      return;
+    }
     const grid = document.createElement("div");
     grid.className = "mb-dynamic-resize-grid";
     const mode = String(resizeWidgets.resize_mode.value || "不缩放");
@@ -1394,7 +1412,8 @@ function createDynamicMediaBoard(node) {
     // that space too, otherwise images can push the audio section below the
     // node boundary as more media outputs are added.
     const outputPortHeight = (state.image.length + state.audio.length) * 20;
-    const height = Math.max(268, 54 + outputPortHeight + imageHeight + 30 + audioHeight + 103);
+    const resizeHeight = node._dynamicResizeCollapsed ? 42 : 140;
+    const height = Math.max(220, 54 + outputPortHeight + imageHeight + 30 + audioHeight + resizeHeight);
     const visibleImages = Math.min(DYNAMIC_MEDIA_LIMIT, state.image.length + 1);
     const visibleAudio = node._dynamicAudioCollapsed ? 0 : Math.min(DYNAMIC_MEDIA_LIMIT, state.audio.length + 1);
     const columns = Math.max(1, Math.min(DYNAMIC_MEDIA_COLUMNS, Math.max(visibleImages, visibleAudio)));
@@ -1409,6 +1428,7 @@ function createDynamicMediaBoard(node) {
       || node.properties?.[DYNAMIC_MEDIA_SAVE_PROPERTY];
     if (backup && typeof backup.media_manifest === "string") manifestWidget.value = backup.media_manifest;
     if (backup && typeof backup.audio_collapsed === "boolean") node._dynamicAudioCollapsed = backup.audio_collapsed;
+    if (backup && typeof backup.resize_collapsed === "boolean") node._dynamicResizeCollapsed = backup.resize_collapsed;
     for (const [name, value] of Object.entries(backup?.resize_settings || {})) {
       if (resizeWidgets[name] && value !== undefined) resizeWidgets[name].value = value;
     }
@@ -1422,6 +1442,7 @@ function createDynamicMediaBoard(node) {
       serialized.properties[DYNAMIC_MEDIA_SAVE_PROPERTY] = {
         media_manifest: manifestWidget.value || "{}",
         audio_collapsed: Boolean(node._dynamicAudioCollapsed),
+        resize_collapsed: Boolean(node._dynamicResizeCollapsed),
         resize_settings: resizeSettings(),
       };
     }
