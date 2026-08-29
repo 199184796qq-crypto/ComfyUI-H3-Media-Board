@@ -5,6 +5,7 @@ const DYNAMIC_MEDIA_LIMIT = 64;
 const DYNAMIC_MEDIA_COLUMNS = 3;
 const LABELS = { image: "参考图片", audio: "参考音频", video: "参考视频" };
 const ACCEPTS = { image: "image/*", audio: "audio/*", video: "video/*" };
+let draggedMediaCard = null;
 const H3_RATIOS = {
   "1:1": [1, 1], "2:3": [2, 3], "3:2": [3, 2], "3:4": [3, 4],
   "4:3": [4, 3], "9:16": [9, 16], "16:9": [16, 9], "21:9": [21, 9],
@@ -123,7 +124,7 @@ function injectStyle() {
     .h3-media-board .mb-title { margin: 8px 0 5px; color:#c9c9c9; font-weight:700; }
     .h3-media-board .mb-row { display:flex; gap:7px; min-height:78px; }
     .h3-media-board .mb-image-grid { display:grid; grid-template-columns:repeat(3, 294px); gap:7px; }
-    .h3-media-board .mb-card { position:relative; box-sizing:border-box; width:294px; flex:0 0 294px; border:1px dashed #687078; border-radius:8px; background:#202428; overflow:hidden; cursor:pointer; }
+    .h3-media-board .mb-card { position:relative; box-sizing:border-box; width:294px; flex:0 0 294px; border:1px dashed #687078; border-radius:8px; background:#202428; overflow:hidden; cursor:pointer; }.h3-media-board .mb-card.sortable { cursor:grab; }.h3-media-board .mb-card.sortable:active { cursor:grabbing; }.h3-media-board .mb-card.sort-target { border:2px solid #6fdaea; box-shadow:inset 0 0 0 1px #6fdaea99; }
     .h3-media-board .mb-card.drag-over { border:2px solid #69ee7a; background:#243129; box-shadow:inset 0 0 0 1px #69ee7a66; }
     .h3-media-board .mb-card.uploading { cursor:progress; border-color:#a987ff; }
     .h3-media-board .mb-upload-overlay { position:absolute; z-index:8; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; padding:12px; color:#f3edff; text-align:center; background:#171321e8; cursor:progress; }
@@ -457,15 +458,24 @@ function makeCard(kind, index, asset, update, config = {}) {
   let dragDepth = 0;
   const acceptsDrop = (event) => transferCanIncludeKind(event, kind);
   card.ondragenter = (event) => {
+    if (config.onReorder && asset && draggedMediaCard?.kind === kind && draggedMediaCard.card !== card) {
+      event.preventDefault(); card.classList.add("sort-target"); return;
+    }
     if (!acceptsDrop(event)) return;
     event.preventDefault(); dragDepth += 1; card.classList.add("drag-over");
   };
   card.ondragover = (event) => {
+    if (config.onReorder && asset && draggedMediaCard?.kind === kind && draggedMediaCard.card !== card) {
+      event.preventDefault(); card.classList.add("sort-target"); return;
+    }
     if (acceptsDrop(event)) { event.preventDefault(); card.classList.add("drag-over"); }
   };
-  card.ondragleave = () => { dragDepth -= 1; if (dragDepth <= 0) { dragDepth = 0; card.classList.remove("drag-over"); } };
+  card.ondragleave = () => { card.classList.remove("sort-target"); dragDepth -= 1; if (dragDepth <= 0) { dragDepth = 0; card.classList.remove("drag-over"); } };
   card.ondrop = async (event) => {
-    dragDepth = 0; card.classList.remove("drag-over");
+    dragDepth = 0; card.classList.remove("drag-over", "sort-target");
+    if (config.onReorder && asset && draggedMediaCard?.kind === kind && draggedMediaCard.card !== card) {
+      event.preventDefault(); stop(event); config.onReorder?.(draggedMediaCard.index); draggedMediaCard = null; return;
+    }
     if (!acceptsDrop(event)) return;
     stop(event); await receiveFiles(transferFiles(event));
   };
@@ -475,6 +485,16 @@ function makeCard(kind, index, asset, update, config = {}) {
     stop(event); await receiveFiles(files);
   };
   if (!asset) { card.textContent = "点击上传文件"; card.prepend(badge); if (frameRole) card.appendChild(frameRole); card.onclick = select; return card; }
+  if (config.onReorder) {
+    card.draggable = true; card.classList.add("sortable");
+    card.ondragstart = (event) => {
+      if (event.target.closest("button, input")) { event.preventDefault(); return; }
+      draggedMediaCard = { card, kind, index };
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", "h3-media-reorder");
+    };
+    card.ondragend = () => { draggedMediaCard = null; card.classList.remove("sort-target"); };
+  }
   if (kind === "image") {
     const image = new Image(); image.src = viewUrl(asset.path); card.appendChild(image);
     image.onpointerenter = (event) => showCardImageHoverPreview(asset.path, event);
@@ -1069,7 +1089,11 @@ function createBoard(node) {
     }
     return priorSerialize?.apply(this, args);
   };
-  const persist = (state) => { manifestWidget.value = JSON.stringify(state); saveBackup(); node.graph?.setDirtyCanvas(true, true); };
+  const persist = (state) => {
+    manifestWidget.value = JSON.stringify(state); saveBackup();
+    for (const listener of node._h3MediaListeners || []) listener(state);
+    node.graph?.setDirtyCanvas(true, true);
+  };
   const cardsAtPointer = (event) => Array.from(root.querySelectorAll(".mb-card")).find((card) => {
     const rect = card.getBoundingClientRect();
     return event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
@@ -1135,6 +1159,12 @@ function createBoard(node) {
           // (and image slots from #2 onward) remain consecutively numbered.
           compactMedia(state, kind);
           persist(state); render();
+        }, {
+          onReorder: (fromIndex) => {
+            if (fromIndex === index || !state[kind][fromIndex] || !state[kind][index]) return;
+            [state[kind][fromIndex], state[kind][index]] = [state[kind][index], state[kind][fromIndex]];
+            persist(state); render();
+          },
         }));
       }
       root.appendChild(row);
@@ -1719,14 +1749,30 @@ function decorateVideoModeControl(node) {
     }
     return null;
   };
+  let observedBoard = null;
+  const onBoardMediaChanged = () => {
+    node.properties = node.properties || {};
+    node.properties.h3_mode_manual_override = false;
+    syncAutoMode(); paint();
+  };
+  const observeBoard = (board) => {
+    if (observedBoard === board) return;
+    observedBoard?._h3MediaListeners?.delete(onBoardMediaChanged);
+    observedBoard = board;
+    if (observedBoard) {
+      observedBoard._h3MediaListeners = observedBoard._h3MediaListeners || new Set();
+      observedBoard._h3MediaListeners.add(onBoardMediaChanged);
+    }
+  };
   const syncAutoMode = () => {
     const board = originalBoard(boardSource());
+    observeBoard(board);
     const manifestWidget = board?.widgets?.find((item) => item.name === "media_manifest");
     if (!manifestWidget) { node._h3AutoMode = null; return; }
     if (node.properties?.h3_mode_manual_override) { node._h3AutoMode = null; return; }
     const media = readManifest(manifestWidget);
     const imageCount = media.image.filter(Boolean).length, audioCount = media.audio.length, videoCount = media.video.length;
-    const useMultiReference = imageCount >= 3 || audioCount > 0 || videoCount > 0;
+    const useMultiReference = imageCount > 3 || audioCount > 0 || videoCount > 0;
     const reason = useMultiReference
       ? `检测到图片 ${imageCount} 张、音频 ${audioCount} 个、视频 ${videoCount} 个`
       : `检测到图片 ${imageCount} 张，暂无音频或视频`;
@@ -1786,6 +1832,11 @@ function decorateVideoModeControl(node) {
   node.setSize?.(fixedSize);
   const previousConnections = node.onConnectionsChange;
   node.onConnectionsChange = function (...args) { previousConnections?.apply(this, args); syncAutoMode(); paint(); };
+  const previousRemoved = node.onRemoved;
+  node.onRemoved = function (...args) {
+    observedBoard?._h3MediaListeners?.delete(onBoardMediaChanged);
+    previousRemoved?.apply(this, args);
+  };
   const previousDraw = node.onDrawForeground;
   node.onDrawForeground = function (ctx) { previousDraw?.call(this, ctx); syncAutoMode(); paint(); };
   syncAutoMode(); paint();
