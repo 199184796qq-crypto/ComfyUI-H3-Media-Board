@@ -817,6 +817,12 @@ class DynamicMediaBoard:
         return {
             "required": {
                 "media_manifest": ("STRING", {"default": "{}", "multiline": False}),
+                "resize_mode": ([
+                    "不缩放", "指定尺寸（拉伸）", "指定尺寸（居中裁切）", "指定尺寸（留边）", "按宽度等比", "按高度等比",
+                ], {"default": "不缩放", "label": "统一图像缩放模式"}),
+                "resize_width": ("INT", {"default": 1024, "min": 16, "max": 16384, "step": 8, "label": "统一缩放宽度"}),
+                "resize_height": ("INT", {"default": 1024, "min": 16, "max": 16384, "step": 8, "label": "统一缩放高度"}),
+                "resize_method": (["双三次", "双线性", "最近邻", "区域"], {"default": "双三次", "label": "缩放算法"}),
             },
         }
 
