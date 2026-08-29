@@ -64,6 +64,7 @@ function compactMedia(state, kind) {
 }
 
 const BOARD_SAVE_PROPERTY = "h3_media_board_saved";
+const BOARD_VERSIONS_PROPERTY = "h3_media_board_versions";
 
 // `nodeCreated` runs while a saved workflow is still being hydrated in some
 // ComfyUI builds.  The board used to render the default empty manifest there,
@@ -96,7 +97,7 @@ function injectStyle() {
   style.textContent = `
     /* Media, H3 settings, Noise and the prompt must all remain inside the node.
        Extra vertical room is intentionally assigned to the prompt textarea. */
-    .h3-media-board { display:flex; flex-direction:column; box-sizing:border-box; width:100%; height:100%; min-width:900px; max-width:900px; min-height:1170px; color:#ddd; font:12px system-ui, sans-serif; user-select:none; }
+    .h3-media-board { display:flex; flex-direction:column; box-sizing:border-box; width:100%; height:100%; min-width:900px; max-width:900px; min-height:1220px; color:#ddd; font:12px system-ui, sans-serif; user-select:none; }
     .h3-dynamic-media-board { min-width:0; min-height:0; width:auto; height:auto; padding-bottom:8px; }
     .h3-dynamic-media-board .mb-dynamic-grid { display:flex; flex-wrap:wrap; gap:7px; }
     .h3-dynamic-media-board .mb-dynamic-grid .mb-card { width:145px; flex:0 0 145px; }
@@ -184,6 +185,7 @@ function injectStyle() {
     .h3-media-board .mb-setting input[type="checkbox"] { width:auto; height:auto; padding:0; accent-color:#69ee7a; transform:scale(1.18); }
     .h3-media-board .mb-setting input:disabled { opacity:.45; cursor:not-allowed; }
     .h3-media-board .mb-output-summary { grid-column:1 / -1; padding:7px 9px; border-left:3px solid #69ee7a; border-radius:4px; color:#76ec87; background:#13271a; font-size:13px; font-weight:800; letter-spacing:.15px; }
+    .h3-media-board .mb-versions { margin:4px 0 11px; padding:7px 9px; border:1px solid #4c626a; border-radius:7px; background:#182127; }.h3-media-board .mb-versions-head { display:flex; align-items:center; gap:8px; }.h3-media-board .mb-versions-toggle { padding:0; border:0; color:#d7edf4; background:transparent; cursor:pointer; font:800 12px system-ui,sans-serif; }.h3-media-board .mb-versions-toggle:hover { color:#fff; }.h3-media-board .mb-versions-current { margin-left:auto; color:#8fa9b4; font-size:10px; }.h3-media-board .mb-versions-body { display:grid; grid-template-columns:1fr auto auto; gap:7px; align-items:center; margin-top:7px; }.h3-media-board .mb-versions select, .h3-media-board .mb-versions button { height:26px; padding:3px 7px; border:1px solid #4b626c; border-radius:4px; color:#e4eef2; background:#11191e; font:11px system-ui,sans-serif; }.h3-media-board .mb-versions button { cursor:pointer; }.h3-media-board .mb-versions button:hover { border-color:#72d9e5; background:#1d3a43; }.h3-media-board .mb-versions button:disabled { cursor:not-allowed; opacity:.45; }
     /* Keep the seed controls as a compact toolbar.  The panel may be wide,
        but its controls must not stretch simply to fill available space. */
     .h3-media-board .mb-noise { position:relative; display:grid; grid-template-columns:minmax(220px,280px) repeat(3, max-content); justify-content:start; gap:8px; align-items:end; margin:16px 0 2px; padding:27px 12px 11px; border:1px solid #685b91; border-radius:9px; background:linear-gradient(145deg,#282338 0%,#1b1925 100%); box-shadow:inset 0 1px #ffffff08, 0 2px 8px #0004; }
@@ -978,14 +980,31 @@ function createBoard(node) {
   }
 
   const root = document.createElement("div"); root.className = "h3-media-board"; root.tabIndex = 0;
-  const saveBackup = () => {
-    node.properties = node.properties || {};
-    const backup = {
-      media_manifest: manifestWidget.value || "{}",
-      prompt: promptWidget.value || "",
-      settings: Object.fromEntries(Object.entries(settingsWidgets).map(([name, widget]) => [name, widget.value])),
+  const cloneSnapshot = (value) => JSON.parse(JSON.stringify(value));
+  const snapshot = () => ({
+    media_manifest: manifestWidget.value || "{}",
+    prompt: promptWidget.value || "",
+    settings: Object.fromEntries(Object.entries(settingsWidgets).map(([name, widget]) => [name, widget.value])),
+  });
+  const readVersions = () => {
+    const stored = node.properties?.[BOARD_VERSIONS_PROPERTY] || {};
+    return {
+      collapsed: stored.collapsed !== false,
+      current: stored.current || null,
+      entries: Array.isArray(stored.entries) ? stored.entries.filter((entry) => entry?.id && entry?.snapshot).slice(0, 20) : [],
     };
+  };
+  const saveVersions = (versions) => {
+    node.properties = node.properties || {};
+    node.properties[BOARD_VERSIONS_PROPERTY] = versions;
+  };
+  const saveBackup = () => {
+    const backup = snapshot();
+    node.properties = node.properties || {};
     node.properties[BOARD_SAVE_PROPERTY] = backup;
+    const versions = readVersions();
+    versions.current = { saved_at: Date.now(), snapshot: cloneSnapshot(backup) };
+    saveVersions(versions);
     try { sessionStorage.setItem(sessionKey, JSON.stringify(backup)); } catch (_) { /* storage can be unavailable */ }
   };
   const prompt = makePromptEditor(promptWidget, node, () => readManifest(manifestWidget), saveBackup);
@@ -1086,6 +1105,7 @@ function createBoard(node) {
     if (serialized && typeof serialized === "object") {
       serialized.properties = serialized.properties || {};
       serialized.properties[BOARD_SAVE_PROPERTY] = node.properties?.[BOARD_SAVE_PROPERTY];
+      serialized.properties[BOARD_VERSIONS_PROPERTY] = node.properties?.[BOARD_VERSIONS_PROPERTY];
     }
     return priorSerialize?.apply(this, args);
   };
@@ -1133,8 +1153,66 @@ function createBoard(node) {
     document.removeEventListener("drop", captureDrop, true);
     priorRemoved?.apply(this, args);
   };
+  const versionTime = (timestamp) => new Date(timestamp).toLocaleString("zh-CN", { hour12: false });
+  const applyVersion = (version) => {
+    const saved = version?.snapshot;
+    if (!saved) return;
+    manifestWidget.value = typeof saved.media_manifest === "string" ? saved.media_manifest : "{}";
+    for (const [name, value] of Object.entries(saved.settings || {})) {
+      if (settingsWidgets[name] && value !== undefined) settingsWidgets[name].value = value;
+    }
+    const promptValue = String(saved.prompt || "");
+    promptWidget.value = promptValue; promptWidget.callback?.(promptValue);
+    prompt.setText?.(promptValue);
+    saveBackup(); render(); node.graph?.setDirtyCanvas(true, true);
+  };
+  const appendVersionManager = () => {
+    const versions = readVersions();
+    const panel = document.createElement("div"); panel.className = "mb-versions";
+    const head = document.createElement("div"); head.className = "mb-versions-head";
+    const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "mb-versions-toggle";
+    toggle.textContent = `${versions.collapsed ? "▸" : "▾"} 版本管理`;
+    const current = document.createElement("span"); current.className = "mb-versions-current";
+    current.textContent = versions.current ? `当前状态 · ${versionTime(versions.current.saved_at)}` : "当前状态";
+    toggle.onclick = (event) => {
+      stop(event); versions.collapsed = !versions.collapsed; saveVersions(versions); render();
+    };
+    head.append(toggle, current); panel.appendChild(head);
+    if (!versions.collapsed) {
+      const body = document.createElement("div"); body.className = "mb-versions-body";
+      const select = document.createElement("select");
+      const currentOption = document.createElement("option"); currentOption.value = "current"; currentOption.textContent = "当前最新状态（系统自动保留）"; select.appendChild(currentOption);
+      versions.entries.forEach((entry) => {
+        const option = document.createElement("option"); option.value = entry.id; option.textContent = `手动版本 · ${versionTime(entry.saved_at)}`; select.appendChild(option);
+      });
+      select.value = node._h3VersionSelection || "current";
+      select.onchange = () => {
+        node._h3VersionSelection = select.value;
+        const selected = select.value === "current" ? versions.current : versions.entries.find((entry) => entry.id === select.value);
+        applyVersion(selected);
+      };
+      const add = document.createElement("button"); add.type = "button"; add.textContent = "保存版本";
+      add.onclick = (event) => {
+        stop(event);
+        const entry = { id: `manual-${Date.now()}`, saved_at: Date.now(), snapshot: cloneSnapshot(snapshot()) };
+        versions.entries.unshift(entry); versions.entries = versions.entries.slice(0, 20);
+        saveVersions(versions); node._h3VersionSelection = entry.id; saveBackup(); render();
+      };
+      const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "删除";
+      remove.disabled = select.value === "current";
+      remove.onclick = (event) => {
+        stop(event); const selected = node._h3VersionSelection || "current";
+        if (selected === "current") return;
+        versions.entries = versions.entries.filter((entry) => entry.id !== selected);
+        node._h3VersionSelection = "current"; saveVersions(versions); render();
+      };
+      body.append(select, add, remove); panel.appendChild(body);
+    }
+    root.appendChild(panel);
+  };
   const render = () => {
     const state = readManifest(manifestWidget); root.replaceChildren();
+    appendVersionManager();
     for (const kind of ["image", "audio", "video"]) {
       const title = document.createElement("div"); title.className = "mb-title"; title.textContent = `${LABELS[kind]} · ${LIMITS[kind]}`; root.appendChild(title);
       const row = document.createElement("div");
@@ -1204,7 +1282,7 @@ function createBoard(node) {
   render();
   // The Noise controls added below the H3 settings need real node height;
   // otherwise the flexible prompt editor can paint past the node boundary.
-  const minSize = [930, 1220];
+  const minSize = [930, 1270];
   const fixedWidth = minSize[0];
   node.min_width = fixedWidth;
   node.max_width = fixedWidth;
@@ -1222,8 +1300,8 @@ function createBoard(node) {
   };
   const domWidget = node.addDOMWidget("media_board_ui", "H3_MEDIA_BOARD_UI", root, {
     getValue: () => "media-board",
-    getMinHeight: () => 1170,
-    getHeight: () => Math.max(1170, node.size[1] - 48),
+    getMinHeight: () => 1220,
+    getHeight: () => Math.max(1220, node.size[1] - 48),
     afterResize: () => { prompt.querySelector(".mb-prompt-editor").style.minHeight = "145px"; },
   });
   node.size = [Math.max(minSize[0], node.size[0]), Math.max(minSize[1], node.size[1])];
