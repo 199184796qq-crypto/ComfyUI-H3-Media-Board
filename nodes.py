@@ -462,16 +462,9 @@ class H3VideoModeControl:
     def control(self, media_board: dict[str, Any], use_image_text: bool):
         # Passing the board through keeps one clean wire path: Media Board →
         # Mode Control → Media Board Outputs, alongside the Boolean control.
-        # Selection follows the actual connected media, not merely the
-        # frontend appearance: three or more images, or any reference audio /
-        # video, requires H3's multi-reference preparation path.
-        manifest = _clean_manifest(media_board)
-        needs_multi_reference = (
-            sum(item is not None for item in manifest["image"]) >= 3
-            or bool(manifest["audio"])
-            or bool(manifest["video"])
-        )
-        return (not needs_multi_reference, media_board)
+        # The frontend supplies a media-based recommendation by default, but
+        # users can always override it with either visible mode button.
+        return (bool(use_image_text), media_board)
 
 
 class H3SecondPassPreparation:

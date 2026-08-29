@@ -130,6 +130,8 @@ function injectStyle() {
     .h3-mode-control .h3-mode-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
     .h3-mode-control .h3-mode-title { color:#e8f6fb; font-size:13px; font-weight:800; }
     .h3-mode-control .h3-mode-caption { color:#8ca8b4; font-size:10px; white-space:nowrap; }
+    .h3-mode-control .h3-mode-auto { margin-left:auto; padding:2px 7px; border:1px solid #45616d; border-radius:5px; color:#a9c5d0; background:#17242b; cursor:pointer; font:10px system-ui,sans-serif; }
+    .h3-mode-control .h3-mode-auto.active, .h3-mode-control .h3-mode-auto:hover { border-color:#69e6ee; color:#e6fbff; background:#1a3b45; }
     .h3-mode-control .h3-mode-options { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
     .h3-mode-control .h3-mode-option { min-height:46px; padding:7px 8px; border:1px solid #40545e; border-radius:7px; color:#b9c6cc; background:#131a20; text-align:left; cursor:pointer; transition:background .14s,border-color .14s,box-shadow .14s; }
     .h3-mode-control .h3-mode-option:hover { border-color:#75cce4; }
@@ -1586,7 +1588,8 @@ function decorateVideoModeControl(node) {
   const head = document.createElement("div"); head.className = "h3-mode-head";
   const title = document.createElement("span"); title.className = "h3-mode-title"; title.textContent = "H3 生视频模式";
   const caption = document.createElement("span"); caption.className = "h3-mode-caption"; caption.textContent = "控制条件 / Latent 切换";
-  head.append(title, caption);
+  const autoButton = document.createElement("button"); autoButton.type = "button"; autoButton.className = "h3-mode-auto"; autoButton.textContent = "自动"; autoButton.title = "恢复按素材自动判断";
+  head.append(title, caption, autoButton);
   const options = document.createElement("div"); options.className = "h3-mode-options";
   const imageText = document.createElement("button"); imageText.type = "button"; imageText.className = "h3-mode-option";
   imageText.innerHTML = "<strong>图文 / 图生</strong><small>输出图文条件与 Latent</small>";
@@ -1618,6 +1621,7 @@ function decorateVideoModeControl(node) {
     const board = originalBoard(boardSource());
     const manifestWidget = board?.widgets?.find((item) => item.name === "media_manifest");
     if (!manifestWidget) { node._h3AutoMode = null; return; }
+    if (node.properties?.h3_mode_manual_override) { node._h3AutoMode = null; return; }
     const media = readManifest(manifestWidget);
     const imageCount = media.image.filter(Boolean).length, audioCount = media.audio.length, videoCount = media.video.length;
     const useMultiReference = imageCount >= 3 || audioCount > 0 || videoCount > 0;
@@ -1633,19 +1637,32 @@ function decorateVideoModeControl(node) {
   const paint = () => {
     const isImageText = Boolean(widget.value);
     const automatic = node._h3AutoMode;
+    const manual = Boolean(node.properties?.h3_mode_manual_override);
     imageText.classList.toggle("active", isImageText);
     multiReference.classList.toggle("active", !isImageText);
-    imageText.disabled = Boolean(automatic); multiReference.disabled = Boolean(automatic);
-    status.textContent = automatic
+    imageText.disabled = false; multiReference.disabled = false;
+    autoButton.classList.toggle("active", !manual);
+    status.textContent = manual
+      ? `手动切换：${isImageText ? "图文 / 图生" : "多参参考"}`
+      : automatic
       ? `自动切换：${automatic.reason} → ${isImageText ? "图文 / 图生" : "多参参考"}`
       : `当前输出：${isImageText ? "图文 / 图生" : "多参参考"} → 接到 H3 条件与 Latent 切换的 external_switch`;
   };
   const choose = (value) => {
+    node.properties = node.properties || {};
+    node.properties.h3_mode_manual_override = true;
+    node._h3AutoMode = null;
     widget.value = value; widget.callback?.(value);
     node.graph?.setDirtyCanvas(true, true); paint();
   };
   imageText.onclick = (event) => { stop(event); choose(true); };
   multiReference.onclick = (event) => { stop(event); choose(false); };
+  autoButton.onclick = (event) => {
+    stop(event);
+    node.properties = node.properties || {};
+    node.properties.h3_mode_manual_override = false;
+    syncAutoMode(); node.graph?.setDirtyCanvas(true, true); paint();
+  };
   root.append(head, options, status); root.onpointerdown = (event) => event.stopPropagation();
   // This is a control, not a workspace panel.  Keep it compact and prevent
   // saved workflows or the resize handle from stretching its two-mode layout.
@@ -1830,6 +1847,54 @@ function decorateDynamicGuide(node, prefix) {
 
 function decorateSecondPassPreparation(node) {
   decorateDynamicGuide(node, "injection");
+  if (node._h3SecondPassModeDecorated) return;
+  const modeWidget = node.widgets?.find((widget) => widget.name === "use_image_text");
+  if (!modeWidget) {
+    const attempts = node._h3SecondPassModeAttempts || 0;
+    if (attempts < 8 && !node._h3SecondPassModePending) {
+      node._h3SecondPassModeAttempts = attempts + 1;
+      node._h3SecondPassModePending = true;
+      setTimeout(() => {
+        node._h3SecondPassModePending = false;
+        decorateSecondPassPreparation(node);
+      }, 80 * (attempts + 1));
+    }
+    return;
+  }
+  node._h3SecondPassModeDecorated = true;
+  const sourceForInput = (inputIndex) => {
+    const link = node.inputs?.[inputIndex]?.link;
+    return node.getInputNode?.(inputIndex)
+      || (link != null ? node.graph?.getNodeById(node.graph.links?.[link]?.origin_id) : null);
+  };
+  const syncExternalMode = () => {
+    const externalIndex = node.inputs?.findIndex((input) => input.name === "external_switch") ?? -1;
+    const source = externalIndex >= 0 ? sourceForInput(externalIndex) : null;
+    const sourceWidget = source?.comfyClass === "H3VideoModeControl"
+      ? source.widgets?.find((widget) => widget.name === "use_image_text")
+      : null;
+    if (!sourceWidget) return;
+    // The Python node already routes from external_switch at execution time.
+    // Mirror that exact upstream state in this Boolean widget so its visible
+    // label always reads 图文 / 图生 or 多参参考 instead of a stale local value.
+    const useImageText = Boolean(sourceWidget.value);
+    if (Boolean(modeWidget.value) !== useImageText) {
+      modeWidget.value = useImageText;
+      modeWidget.callback?.(useImageText);
+      node.graph?.setDirtyCanvas?.(true, true);
+    }
+  };
+  const priorConnections = node.onConnectionsChange;
+  node.onConnectionsChange = function (...args) {
+    priorConnections?.apply(this, args);
+    syncExternalMode();
+  };
+  const priorDraw = node.onDrawForeground;
+  node.onDrawForeground = function (ctx) {
+    priorDraw?.call(this, ctx);
+    syncExternalMode();
+  };
+  syncExternalMode();
 }
 
 function decorateMultiTimeGuide(node) {
