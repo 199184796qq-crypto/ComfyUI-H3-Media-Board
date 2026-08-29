@@ -107,6 +107,13 @@ function injectStyle() {
     .h3-dynamic-media-board .mb-dynamic-grid .mb-audio .mb-name { padding-left:30px; }
     .h3-dynamic-media-board .mb-dynamic-grid .mb-card.empty { width:144px; min-width:144px; height:52px; min-height:52px; flex-basis:144px; font-size:11px; }
     .h3-dynamic-media-board .mb-dynamic-grid .mb-card.empty .mb-index { top:5px; left:5px; padding:1px 6px; }
+    .h3-dynamic-media-board .mb-dynamic-resize { margin-top:11px; padding:8px; border:1px solid #46606b; border-radius:7px; background:#172127; }
+    .h3-dynamic-media-board .mb-dynamic-resize-title { margin-bottom:7px; color:#d7edf4; font-size:12px; font-weight:800; }
+    .h3-dynamic-media-board .mb-dynamic-resize-hint { margin-left:6px; color:#8ea8b1; font-size:10px; font-weight:400; }
+    .h3-dynamic-media-board .mb-dynamic-resize-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
+    .h3-dynamic-media-board .mb-dynamic-resize-field { display:flex; flex-direction:column; gap:3px; min-width:0; color:#9fb2ba; font-size:10px; }
+    .h3-dynamic-media-board .mb-dynamic-resize-field select, .h3-dynamic-media-board .mb-dynamic-resize-field input { box-sizing:border-box; width:100%; height:25px; padding:3px 5px; border:1px solid #4b626c; border-radius:4px; color:#e4eef2; background:#11191e; font:11px system-ui,sans-serif; }
+    .h3-dynamic-media-board .mb-dynamic-resize-field input:disabled, .h3-dynamic-media-board .mb-dynamic-resize-field select:disabled { cursor:not-allowed; opacity:.42; }
     .h3-dynamic-media-board .mb-dynamic-section-title { display:flex; align-items:center; justify-content:space-between; width:fit-content; margin:10px 0 5px; padding:0; border:0; color:#c9c9c9; background:transparent; font:700 12px system-ui,sans-serif; cursor:pointer; }
     .h3-dynamic-media-board .mb-dynamic-section-title:hover { color:#e6f2f4; }
     .h3-dynamic-media-board .mb-dynamic-section-arrow { margin-left:8px; color:#88a8b3; font-size:11px; }
@@ -1212,7 +1219,10 @@ function createDynamicMediaBoard(node) {
   if (node._dynamicMediaBoardCreated) return;
   injectStyle();
   const manifestWidget = node.widgets?.find((widget) => widget.name === "media_manifest");
-  if (!manifestWidget) {
+  const resizeWidgets = Object.fromEntries(["resize_mode", "resize_width", "resize_height", "resize_method"].map((name) => [
+    name, node.widgets?.find((widget) => widget.name === name),
+  ]));
+  if (!manifestWidget || Object.values(resizeWidgets).some((widget) => !widget)) {
     const attempts = node._dynamicMediaBoardAttempts || 0;
     if (attempts < 8 && !node._dynamicMediaBoardPending) {
       node._dynamicMediaBoardAttempts = attempts + 1;
@@ -1222,17 +1232,24 @@ function createDynamicMediaBoard(node) {
     return;
   }
   node._dynamicMediaBoardCreated = true;
-  manifestWidget.hidden = true;
-  manifestWidget.options = manifestWidget.options || {};
-  manifestWidget.options.hidden = true;
-  manifestWidget.serialize = true;
-  manifestWidget.serializeValue = () => manifestWidget.value;
-  manifestWidget.computeSize = () => [0, -4];
-  manifestWidget.draw = () => {};
-  if (manifestWidget.element) manifestWidget.element.style.display = "none";
+  const hideDynamicWidget = (widget) => {
+    widget.hidden = true;
+    widget.options = widget.options || {};
+    widget.options.hidden = true;
+    widget.serialize = true;
+    widget.serializeValue = () => widget.value;
+    widget.computeSize = () => [0, -4];
+    widget.draw = () => {};
+    if (widget.element) widget.element.style.display = "none";
+  };
+  hideDynamicWidget(manifestWidget);
+  Object.values(resizeWidgets).forEach(hideDynamicWidget);
 
   const saved = node.properties?.[DYNAMIC_MEDIA_SAVE_PROPERTY];
   if (saved && typeof saved.media_manifest === "string") manifestWidget.value = saved.media_manifest;
+  for (const [name, value] of Object.entries(saved?.resize_settings || {})) {
+    if (resizeWidgets[name] && value !== undefined) resizeWidgets[name].value = value;
+  }
   node._dynamicAudioCollapsed = Boolean(saved?.audio_collapsed);
   const root = document.createElement("div");
   root.className = "h3-media-board h3-dynamic-media-board";
@@ -1260,14 +1277,73 @@ function createDynamicMediaBoard(node) {
     }
     node.graph?.setDirtyCanvas?.(true, true);
   };
+  const resizeSettings = () => Object.fromEntries(Object.entries(resizeWidgets).map(([name, widget]) => [name, widget.value]));
   const persist = (state) => {
     manifestWidget.value = JSON.stringify(state);
     node.properties = node.properties || {};
     node.properties[DYNAMIC_MEDIA_SAVE_PROPERTY] = {
       media_manifest: manifestWidget.value,
       audio_collapsed: Boolean(node._dynamicAudioCollapsed),
+      resize_settings: resizeSettings(),
     };
     node.graph?.setDirtyCanvas?.(true, true);
+  };
+  const appendResizePanel = (state) => {
+    const panel = document.createElement("div");
+    panel.className = "mb-dynamic-resize";
+    const title = document.createElement("div");
+    title.className = "mb-dynamic-resize-title";
+    title.textContent = "统一图像缩放";
+    const hint = document.createElement("span");
+    hint.className = "mb-dynamic-resize-hint";
+    hint.textContent = "所有图片输出均按此设置处理";
+    title.appendChild(hint);
+    panel.appendChild(title);
+    const grid = document.createElement("div");
+    grid.className = "mb-dynamic-resize-grid";
+    const mode = String(resizeWidgets.resize_mode.value || "不缩放");
+    const enabled = mode !== "不缩放";
+    const addField = (label, name, values = null, disabled = false) => {
+      const field = document.createElement("label");
+      field.className = "mb-dynamic-resize-field";
+      field.append(document.createTextNode(label));
+      const widget = resizeWidgets[name];
+      const control = document.createElement(values ? "select" : "input");
+      control.disabled = disabled;
+      if (values) {
+        values.forEach((value) => {
+          const option = document.createElement("option");
+          option.value = value; option.textContent = value;
+          control.appendChild(option);
+        });
+        control.value = String(widget.value ?? values[0]);
+      } else {
+        control.type = "number";
+        control.min = String(widget.options?.min ?? 16);
+        control.max = String(widget.options?.max ?? 16384);
+        control.step = String(widget.options?.step ?? 8);
+        control.value = String(widget.value ?? 1024);
+      }
+      control.onchange = () => {
+        let value = control.value;
+        if (!values) {
+          const min = Number(control.min); const max = Number(control.max);
+          value = Math.max(min, Math.min(max, Number.parseInt(value, 10) || min));
+          control.value = String(value);
+        }
+        widget.value = value;
+        widget.callback?.(value);
+        persist(state);
+        render();
+      };
+      field.appendChild(control); grid.appendChild(field);
+    };
+    addField("缩放模式", "resize_mode", ["不缩放", "指定尺寸（拉伸）", "指定尺寸（居中裁切）", "指定尺寸（留边）", "按宽度等比", "按高度等比"]);
+    addField("算法", "resize_method", ["双三次", "双线性", "最近邻", "区域"], !enabled);
+    addField("宽度", "resize_width", null, !enabled || mode === "按高度等比");
+    addField("高度", "resize_height", null, !enabled || mode === "按宽度等比");
+    panel.appendChild(grid);
+    root.appendChild(panel);
   };
   const render = () => {
     const state = readDynamicMediaManifest(manifestWidget);
@@ -1305,6 +1381,7 @@ function createDynamicMediaBoard(node) {
       }
       root.appendChild(grid);
     }
+    appendResizePanel(state);
     refreshOutputs(state);
     const sectionHeight = (count, fullRowHeight) => {
       if (count === 0) return 58;
@@ -1317,7 +1394,7 @@ function createDynamicMediaBoard(node) {
     // that space too, otherwise images can push the audio section below the
     // node boundary as more media outputs are added.
     const outputPortHeight = (state.image.length + state.audio.length) * 20;
-    const height = Math.max(170, 54 + outputPortHeight + imageHeight + 30 + audioHeight);
+    const height = Math.max(268, 54 + outputPortHeight + imageHeight + 30 + audioHeight + 103);
     const visibleImages = Math.min(DYNAMIC_MEDIA_LIMIT, state.image.length + 1);
     const visibleAudio = node._dynamicAudioCollapsed ? 0 : Math.min(DYNAMIC_MEDIA_LIMIT, state.audio.length + 1);
     const columns = Math.max(1, Math.min(DYNAMIC_MEDIA_COLUMNS, Math.max(visibleImages, visibleAudio)));
@@ -1332,6 +1409,9 @@ function createDynamicMediaBoard(node) {
       || node.properties?.[DYNAMIC_MEDIA_SAVE_PROPERTY];
     if (backup && typeof backup.media_manifest === "string") manifestWidget.value = backup.media_manifest;
     if (backup && typeof backup.audio_collapsed === "boolean") node._dynamicAudioCollapsed = backup.audio_collapsed;
+    for (const [name, value] of Object.entries(backup?.resize_settings || {})) {
+      if (resizeWidgets[name] && value !== undefined) resizeWidgets[name].value = value;
+    }
     render();
   };
   const priorSerialize = node.onSerialize;
@@ -1342,6 +1422,7 @@ function createDynamicMediaBoard(node) {
       serialized.properties[DYNAMIC_MEDIA_SAVE_PROPERTY] = {
         media_manifest: manifestWidget.value || "{}",
         audio_collapsed: Boolean(node._dynamicAudioCollapsed),
+        resize_settings: resizeSettings(),
       };
     }
     return priorSerialize?.apply(this, args);

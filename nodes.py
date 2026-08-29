@@ -115,6 +115,64 @@ def _clean_dynamic_media_manifest(raw: str | dict[str, Any] | None) -> dict[str,
     return result
 
 
+def _resize_dynamic_image(
+    image: torch.Tensor,
+    mode: str,
+    target_width: int,
+    target_height: int,
+    method: str,
+) -> torch.Tensor:
+    """Resize a Comfy IMAGE batch for DynamicMediaBoard outputs.
+
+    The board owns the final pixels passed downstream, so every dynamic image
+    output shares one predictable geometry before it reaches an H3 guide.
+    """
+    if mode == "不缩放" or image.ndim != 4:
+        return image
+    target_width = max(16, min(16384, int(target_width)))
+    target_height = max(16, min(16384, int(target_height)))
+    source_height, source_width = int(image.shape[1]), int(image.shape[2])
+    if source_width < 1 or source_height < 1:
+        return image
+    interpolation = {
+        "最近邻": "nearest-exact",
+        "双线性": "bilinear",
+        "双三次": "bicubic",
+        "区域": "area",
+    }.get(method, "bicubic")
+    pixels = image.movedim(-1, 1)
+
+    def scale(height: int, width: int) -> torch.Tensor:
+        kwargs: dict[str, Any] = {"size": (max(1, height), max(1, width)), "mode": interpolation}
+        if interpolation in {"bilinear", "bicubic"}:
+            kwargs["align_corners"] = False
+        return torch.nn.functional.interpolate(pixels, **kwargs)
+
+    if mode == "按宽度等比":
+        result = scale(round(source_height * target_width / source_width), target_width)
+    elif mode == "按高度等比":
+        result = scale(target_height, round(source_width * target_height / source_height))
+    elif mode == "指定尺寸（居中裁切）":
+        factor = max(target_width / source_width, target_height / source_height)
+        result = scale(round(source_height * factor), round(source_width * factor))
+        top = max(0, (result.shape[2] - target_height) // 2)
+        left = max(0, (result.shape[3] - target_width) // 2)
+        result = result[:, :, top:top + target_height, left:left + target_width]
+    elif mode == "指定尺寸（留边）":
+        factor = min(target_width / source_width, target_height / source_height)
+        result = scale(round(source_height * factor), round(source_width * factor))
+        pad_width = target_width - result.shape[3]
+        pad_height = target_height - result.shape[2]
+        result = torch.nn.functional.pad(
+            result,
+            (max(0, pad_width // 2), max(0, pad_width - pad_width // 2), max(0, pad_height // 2), max(0, pad_height - pad_height // 2)),
+            value=0.0,
+        )
+    else:  # 指定尺寸（拉伸）
+        result = scale(target_height, target_width)
+    return result.movedim(1, -1).contiguous()
+
+
 async def _upload_media(request: web.Request) -> web.Response:
     """Small, node-scoped uploader used by the browser-side media cards."""
     body = await request.post()
@@ -772,9 +830,19 @@ class DynamicMediaBoard:
     FUNCTION = "collect"
     CATEGORY = "H3 / Media"
 
-    def collect(self, media_manifest: str):
+    def collect(
+        self,
+        media_manifest: str,
+        resize_mode: str = "不缩放",
+        resize_width: int = 1024,
+        resize_height: int = 1024,
+        resize_method: str = "双三次",
+    ):
         manifest = _clean_dynamic_media_manifest(media_manifest)
-        images = [_load_image(item) for item in manifest["image"]]
+        images = [
+            _resize_dynamic_image(_load_image(item), resize_mode, resize_width, resize_height, resize_method)
+            for item in manifest["image"]
+        ]
         audios = [_load_audio(item) for item in manifest["audio"]]
         values = images + audios
         values += [None] * (DYNAMIC_MEDIA_LIMIT * 2 - len(values))
