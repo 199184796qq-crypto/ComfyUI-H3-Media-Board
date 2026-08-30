@@ -2212,28 +2212,6 @@ function multiLoraRow(node, index) {
   ].filter(Boolean);
 }
 
-function removeLegacyMultiLoraClip(node) {
-  // Workflows created by the first node version still carry a CLIP input,
-  // CLIP output and clip_strength widgets in their serialized node state.
-  // The current backend is model-only, so strip those stale UI elements when
-  // an old workflow is opened instead of requiring the user to rebuild it.
-  for (let index = (node.inputs?.length || 0) - 1; index >= 0; index--) {
-    if (String(node.inputs[index]?.name || "").toLowerCase() !== "clip") continue;
-    node.disconnectInput?.(index);
-    node.removeInput?.(index);
-  }
-  for (let index = (node.outputs?.length || 0) - 1; index >= 0; index--) {
-    if (String(node.outputs[index]?.name || "").toLowerCase() !== "clip") continue;
-    node.disconnectOutput?.(index);
-    node.removeOutput?.(index);
-  }
-  if (node.widgets) {
-    node.widgets = node.widgets.filter(
-      (widget) => !/^clip_strength_\d+$/.test(String(widget.name || "")),
-    );
-  }
-}
-
 function multiLoraSetVisible(widget, visible) {
   if (!widget) return;
   if (!widget._multiLoraOriginal) {
@@ -2343,12 +2321,13 @@ function refreshMultiLora(node, count = multiLoraCount(node)) {
 }
 
 function createMultiLoraLoader(node) {
-  removeLegacyMultiLoraClip(node);
   if (node._multiLoraReady) {
     refreshMultiLora(node);
     return;
   }
   node._multiLoraReady = true;
+  node.properties ??= {};
+  node.properties.multi_lora_schema_version = 3;
 
   for (let index = 1; index <= MULTI_LORA_MAX; index++) {
     const [lora, strength, enabled] = multiLoraRow(node, index);
@@ -2375,14 +2354,17 @@ app.registerExtension({
   beforeConfigureGraph(graphData) {
     for (const node of graphData?.nodes ?? []) {
       if (!isMultiLoraNode(node) || !Array.isArray(node.widgets_values)) continue;
+      const schemaVersion = Number(node.properties?.multi_lora_schema_version || 0);
       const hasLegacyClip = (node.inputs || []).some(
         (input) => String(input?.name || "").toLowerCase() === "clip",
       ) || (node.outputs || []).some(
         (output) => String(output?.name || "").toLowerCase() === "clip",
       );
       // The first version stored one CLIP strength after every LoRA row.
-      // Remove those values before migrating the old two-widget rows below.
-      if (hasLegacyClip && node.widgets_values.length >= 1 + MULTI_LORA_MAX * 3) {
+      // The current version uses the CLIP socket directly, with the same
+      // strength as its MODEL counterpart. Remove only those obsolete values.
+      if (schemaVersion < 3 && hasLegacyClip
+          && node.widgets_values.length >= 1 + MULTI_LORA_MAX * 3) {
         for (let index = MULTI_LORA_MAX; index >= 1; index--) {
           node.widgets_values.splice(1 + (index - 1) * 3 + 2, 1);
         }
@@ -2396,7 +2378,7 @@ app.registerExtension({
         }
       }
       node.properties ??= {};
-      node.properties.multi_lora_schema_version = 2;
+      node.properties.multi_lora_schema_version = 3;
     }
   },
   beforeRegisterNodeDef(nodeType, nodeData) {

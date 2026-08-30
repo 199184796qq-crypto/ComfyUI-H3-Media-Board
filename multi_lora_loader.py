@@ -48,10 +48,20 @@ class MultiLoRALoader:
                     "tooltip": "Keep the selected LoRA and its strength, but skip applying it when disabled.",
                 },
             )
-        return {"required": required}
+        return {
+            "required": required,
+            "optional": {
+                "clip": (
+                    "CLIP",
+                    {
+                        "tooltip": "Optional. Connect the text encoder to also apply compatible token-refiner / CLIP LoRA weights.",
+                    },
+                ),
+            },
+        }
 
-    RETURN_TYPES = ("MODEL",)
-    RETURN_NAMES = ("MODEL",)
+    RETURN_TYPES = ("MODEL", "CLIP")
+    RETURN_NAMES = ("MODEL", "CLIP")
     FUNCTION = "load_loras"
     CATEGORY = "loaders"
     DESCRIPTION = (
@@ -69,7 +79,7 @@ class MultiLoRALoader:
             self._cache = {path: cached}
         return cached
 
-    def load_loras(self, model, lora_count=1, **kwargs):
+    def load_loras(self, model, lora_count=1, clip=None, **kwargs):
         active_count = max(1, min(self.MAX_LORAS, int(lora_count)))
         applied_loras = []
         for index in range(1, active_count + 1):
@@ -93,12 +103,12 @@ class MultiLoRALoader:
                 f"（模型强度 {model_strength:g}）"
             )
             lora, metadata = self._load_file(lora_name)
-            model, _ = comfy.sd.load_lora_for_models(
+            model, clip = comfy.sd.load_lora_for_models(
                 model,
-                None,
+                clip,
                 lora,
                 model_strength,
-                0,
+                model_strength if clip is not None else 0,
                 lora_metadata=metadata,
             )
             applied_loras.append(f"第 {index} 条 {lora_name}")
@@ -111,7 +121,7 @@ class MultiLoRALoader:
             print(
                 f"[多 LoRA 加载器] 未加载 LoRA：{active_count} 条活动行均为空或模型强度为 0。"
             )
-        return (model,)
+        return (model, clip)
 
 
 NODE_CLASS_MAPPINGS = {"MultiLoRALoader": MultiLoRALoader}
