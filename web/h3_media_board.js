@@ -170,7 +170,7 @@ function injectStyle() {
     .h3-media-board .mb-upload-overlay.error { color:#ffc1c8; background:#28171be8; cursor:pointer; }
     .h3-media-board .mb-upload-overlay.error .mb-upload-track { display:none; }
     @keyframes mb-upload-pulse { from { transform:translateX(-55%); } to { transform:translateX(205%); } }
-    .h3-mode-control { box-sizing:border-box; display:flex; flex-direction:column; gap:9px; width:100%; height:100%; min-height:108px; padding:11px; color:#e7edf3; background:linear-gradient(145deg,#1d2a32,#151c22); border:1px solid #45616d; border-radius:9px; font:12px system-ui,sans-serif; }
+    .h3-mode-control { box-sizing:border-box; display:flex; flex-direction:column; gap:9px; width:100%; height:auto; min-height:0; padding:11px; color:#e7edf3; background:linear-gradient(145deg,#1d2a32,#151c22); border:1px solid #45616d; border-radius:9px; font:12px system-ui,sans-serif; }
     .h3-mode-control .h3-mode-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
     .h3-mode-control .h3-mode-title { color:#e8f6fb; font-size:13px; font-weight:800; }
     .h3-mode-control .h3-mode-caption { color:#8ca8b4; font-size:10px; white-space:nowrap; }
@@ -2074,29 +2074,46 @@ function decorateVideoModeControl(node) {
     syncAutoMode(); node.graph?.setDirtyCanvas(true, true); paint();
   };
   root.append(head, options, status); root.onpointerdown = (event) => event.stopPropagation();
-  // This is a control, not a workspace panel.  Keep it compact and prevent
-  // saved workflows or the resize handle from stretching its two-mode layout.
-  const fixedSize = [430, 180];
+  // LiteGraph sizes the outer frame independently from DOM widgets.  The old
+  // fixed 180px height clipped the mode cards/status bar whenever browser
+  // zoom, fonts, or a wrapped status message made the DOM content taller.
+  // Measure the real content and keep the canvas node in sync.
+  const fixedWidth = 430;
+  const minimumContentHeight = 132;
+  const nodeChromeHeight = 72;
+  let controlHeight = minimumContentHeight + nodeChromeHeight;
+  const syncControlSize = () => {
+    const contentHeight = Math.max(minimumContentHeight, Math.ceil(root.scrollHeight || 0));
+    const nextHeight = contentHeight + nodeChromeHeight;
+    if (controlHeight === nextHeight && node.size?.[0] === fixedWidth && node.size?.[1] === nextHeight) return;
+    controlHeight = nextHeight;
+    node.min_size = [fixedWidth, controlHeight];
+    node.max_size = [fixedWidth, controlHeight];
+    node.min_width = fixedWidth; node.max_width = fixedWidth;
+    node.min_height = controlHeight; node.max_height = controlHeight;
+    node.setSize?.([fixedWidth, controlHeight]);
+    node.graph?.setDirtyCanvas?.(true, true);
+  };
   node.resizable = false;
-  node.min_size = fixedSize; node.max_size = fixedSize;
-  node.min_width = fixedSize[0]; node.max_width = fixedSize[0];
-  node.min_height = fixedSize[1]; node.max_height = fixedSize[1];
   const resizeBeforeLock = node.onResize;
   node.onResize = function (size) {
-    size[0] = fixedSize[0]; size[1] = fixedSize[1];
+    size[0] = fixedWidth; size[1] = controlHeight;
     resizeBeforeLock?.call(this, size);
   };
   node.addDOMWidget("h3_video_mode_ui", "H3_VIDEO_MODE_UI", root, {
     getValue: () => Boolean(widget.value),
-    getMinHeight: () => 108,
-    getHeight: () => 108,
+    getMinHeight: () => minimumContentHeight,
+    getHeight: () => Math.max(minimumContentHeight, Math.ceil(root.scrollHeight || 0)),
   });
-  node.setSize?.(fixedSize);
+  const resizeObserver = new ResizeObserver(() => syncControlSize());
+  resizeObserver.observe(root);
+  requestAnimationFrame(syncControlSize);
   const previousConnections = node.onConnectionsChange;
   node.onConnectionsChange = function (...args) { previousConnections?.apply(this, args); syncAutoMode(); paint(); };
   const previousRemoved = node.onRemoved;
   node.onRemoved = function (...args) {
     observedBoard?._h3MediaListeners?.delete(onBoardMediaChanged);
+    resizeObserver.disconnect();
     previousRemoved?.apply(this, args);
   };
   const previousDraw = node.onDrawForeground;
