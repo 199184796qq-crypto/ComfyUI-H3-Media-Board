@@ -130,7 +130,7 @@ function injectStyle() {
   style.textContent = `
     /* Media, H3 settings, Noise and the prompt must all remain inside the node.
        Extra vertical room is intentionally assigned to the prompt textarea. */
-    .h3-media-board { display:flex; flex-direction:column; box-sizing:border-box; width:100%; height:100%; min-width:900px; max-width:900px; min-height:1220px; color:#ddd; font:12px system-ui, sans-serif; user-select:none; }
+    .h3-media-board { display:flex; flex-direction:column; box-sizing:border-box; width:100%; height:100%; min-width:900px; max-width:900px; min-height:1350px; color:#ddd; font:12px system-ui, sans-serif; user-select:none; }
     .h3-dynamic-media-board { min-width:0; min-height:0; width:auto; height:auto; padding-bottom:8px; }
     .h3-dynamic-media-board .mb-dynamic-grid { display:flex; flex-wrap:wrap; gap:7px; }
     .h3-dynamic-media-board .mb-dynamic-grid .mb-card { width:145px; flex:0 0 145px; }
@@ -234,13 +234,13 @@ function injectStyle() {
     .h3-media-board .mb-noise-action { width:132px; height:29px; padding:0 8px; border:1px solid #645588; border-radius:5px; color:#e9e2ff; background:#332b48; cursor:pointer; font:11px system-ui, sans-serif; white-space:nowrap; }
     .h3-media-board .mb-noise-action:hover { border-color:#c7b2ff; background:#443862; }
     .h3-media-board .mb-noise-status { grid-column:1 / -1; justify-self:start; width:fit-content; max-width:100%; padding:6px 8px; border-left:3px solid #b998ff; border-radius:4px; color:#d8ccff; background:#211d30; font-size:11px; }
-    .h3-media-board .mb-prompt-shell { position:relative; display:flex; flex:1 1 auto; flex-direction:column; min-height:145px; margin:9px 0 4px; }
-    .h3-media-board .mb-prompt-actions { display:flex; align-items:center; justify-content:flex-end; gap:6px; margin:0 2px 6px; }
+    .h3-media-board .mb-prompt-shell { position:relative; display:flex; flex:1 1 auto; flex-direction:column; min-height:145px; margin:9px 0 4px; overflow:hidden; }
+    .h3-media-board .mb-prompt-actions { display:flex; align-items:center; justify-content:flex-start; gap:6px; margin:0 2px 6px; }
     .h3-media-board .mb-prompt-action { height:25px; padding:0 10px; border:1px solid #4c626a; border-radius:5px; color:#dcebf0; background:#1b292f; cursor:pointer; font:700 11px system-ui, sans-serif; transition:background .16s ease,border-color .16s ease,color .16s ease; }
     .h3-media-board .mb-prompt-action:hover { border-color:#78d7e3; color:#f5fcff; background:#25434d; }
     .h3-media-board .mb-prompt-action-clear { color:#ffc6c8; border-color:#734d53; background:#352127; }
     .h3-media-board .mb-prompt-action-clear:hover { border-color:#ef7a80; color:#fff0f1; background:#51282e; }
-    .h3-media-board .mb-prompt-editor { box-sizing:border-box; width:100%; min-height:145px; padding:8px; overflow:auto; color:#ececec; background:#15181b; border:1px solid #586168; border-radius:6px; outline:none; white-space:pre-wrap; overflow-wrap:anywhere; user-select:text; font:12px ui-monospace, Consolas, monospace; }
+    .h3-media-board .mb-prompt-editor { box-sizing:border-box; width:100%; flex:1 1 0; min-height:145px; padding:8px; overflow:auto; color:#ececec; background:#15181b; border:1px solid #586168; border-radius:6px; outline:none; white-space:pre-wrap; overflow-wrap:anywhere; user-select:text; font:12px ui-monospace, Consolas, monospace; }
     .h3-media-board .mb-prompt-editor:focus { border-color:#78d7e3; box-shadow:0 0 0 2px #78d7e322; }
     .h3-media-board .mb-prompt-editor:empty::before { content:attr(data-placeholder); color:#707981; pointer-events:none; }
     .h3-media-board .mb-media-ref { color:#ff626b; font-weight:800; text-shadow:0 0 8px #ff4e5a55; cursor:help; }
@@ -1459,26 +1459,29 @@ function createBoard(node) {
   render();
   // The Noise controls added below the H3 settings need real node height;
   // otherwise the flexible prompt editor can paint past the node boundary.
-  const minSize = [930, 1270];
+  // Keep the canvas frame and the full DOM board in sync.  The toolbar above
+  // the prompt needs additional vertical room beyond the former 1220px DOM
+  // minimum, otherwise the lowest editor area can protrude past the frame.
+  const minSize = [930, 1400];
   const fixedWidth = minSize[0];
   node.min_width = fixedWidth;
-  node.max_width = fixedWidth;
   node.min_height = minSize[1];
+  node.max_width = fixedWidth;
+  node.max_height = Number.MAX_SAFE_INTEGER;
   node.min_size = minSize;
   node.max_size = [fixedWidth, Number.MAX_SAFE_INTEGER];
   const priorResize = node.onResize;
   node.onResize = function (size) {
-    // ComfyUI has both legacy and Nodes 2.0 resize paths.  Clamping here as
-    // well as declaring min_size makes the limit hold in either renderer.
-    // The card layout must never stretch horizontally: only node height is resizable.
+    // The fixed card grid must not change width. Height remains user-resizable
+    // above its minimum and is never recomputed from prompt/external_prompt.
     size[0] = fixedWidth;
-    size[1] = Math.max(minSize[1], size[1]);
+    size[1] = Math.max(minSize[1], Number(size[1]) || minSize[1]);
     priorResize?.call(this, size);
   };
   const domWidget = node.addDOMWidget("media_board_ui", "H3_MEDIA_BOARD_UI", root, {
     getValue: () => "media-board",
-    getMinHeight: () => 1220,
-    getHeight: () => Math.max(1220, node.size[1] - 48),
+    getMinHeight: () => 1350,
+    getHeight: () => Math.max(1350, node.size[1] - 48),
     afterResize: () => { prompt.querySelector(".mb-prompt-editor").style.minHeight = "145px"; },
   });
   node.size = [Math.max(minSize[0], node.size[0]), Math.max(minSize[1], node.size[1])];
