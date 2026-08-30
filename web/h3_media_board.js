@@ -2123,6 +2123,28 @@ function decorateConditionLatentSwitch(node) {
     return;
   }
   node._h3ConditionSwitchDecorated = true;
+  // This is a compact routing node.  Its useful height is determined entirely
+  // by the fixed sockets and its one Boolean widget, so extra vertical space
+  // only makes the canvas harder to arrange.  Keep that measured height while
+  // retaining horizontal resizing for long socket labels and wiring layouts.
+  const preferredSize = node.computeSize?.() || node.size || [360, 250];
+  const fixedHeight = Math.max(160, Math.ceil(Number(preferredSize[1]) || 250));
+  const minWidth = Math.max(300, Math.ceil(Number(preferredSize[0]) || 360));
+  const maxWidth = 920;
+  node.resizable = true;
+  node.min_width = minWidth;
+  node.max_width = maxWidth;
+  node.min_height = fixedHeight;
+  node.max_height = fixedHeight;
+  node.min_size = [minWidth, fixedHeight];
+  node.max_size = [maxWidth, fixedHeight];
+  const resizeBeforeHeightLock = node.onResize;
+  node.onResize = function (size) {
+    size[0] = Math.min(maxWidth, Math.max(minWidth, Number(size[0]) || minWidth));
+    size[1] = fixedHeight;
+    resizeBeforeHeightLock?.call(this, size);
+  };
+  node.setSize?.([Math.min(maxWidth, Math.max(minWidth, Number(node.size?.[0]) || minWidth)), fixedHeight]);
   const inputSource = (inputIndex) => {
     const link = node.inputs?.[inputIndex]?.link;
     return node.getInputNode?.(inputIndex)
@@ -2431,6 +2453,9 @@ app.registerExtension({
     }
   },
   loadedGraphNode(node) {
+    if (node.comfyClass === "H3ConditionLatentSwitch") {
+      requestAnimationFrame(() => decorateConditionLatentSwitch(node));
+    }
     if (isStableMultiLoraNode(node)) {
       requestAnimationFrame(() => createStableMultiLoraLoader(node));
     }
