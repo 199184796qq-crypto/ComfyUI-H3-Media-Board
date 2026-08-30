@@ -604,12 +604,26 @@ function makeH3SettingsPanel(widgets, node) {
   const autoInput = createControl("auto_calculate", "自动计算帧数", "checkbox");
   const manualInput = createControl("manual_frames", "手动帧数", "number", { min: 1, max: 10000, step: 1 });
   createControl("second_pass_scale", "2采放大倍数", "number", { min: 1, max: 4, step: 0.1, decimals: 1 });
-  const syncFrameMode = () => {
-    manualInput.disabled = Boolean(widgets.auto_calculate.value);
+  const syncFrameMode = (copyCalculatedFrames = false) => {
+    const automatic = Boolean(widgets.auto_calculate.value);
+    if (automatic && copyCalculatedFrames) {
+      const calculated = h3Settings(
+        widgets.duration.value, widgets.aspect_ratio.value, widgets.megapixels.value,
+        widgets.multiple.value, widgets.second_pass_scale.value, true, widgets.manual_frames.value,
+      ).frames;
+      if (Number(widgets.manual_frames.value) !== calculated) {
+        widgets.manual_frames.value = calculated;
+        widgets.manual_frames.callback?.(calculated);
+        manualInput.value = String(calculated);
+        node._h3SaveBackup?.();
+        node.graph?.setDirtyCanvas(true, true);
+      }
+    }
+    manualInput.disabled = automatic;
     panel.querySelector(".mb-output-summary").textContent = summaryText();
   };
   const autoChange = autoInput.onchange;
-  autoInput.onchange = (event) => { autoChange(event); syncFrameMode(); };
+  autoInput.onchange = (event) => { autoChange(event); syncFrameMode(true); };
   const summary = document.createElement("div"); summary.className = "mb-output-summary";
   summary.textContent = summaryText();
   panel.appendChild(summary);
@@ -1260,6 +1274,15 @@ function createBoard(node) {
     const rect = card.getBoundingClientRect();
     return event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
   });
+  const mediaKindAtPointer = (event) => {
+    const card = cardsAtPointer(event);
+    if (card) return card._h3MediaKind;
+    const row = Array.from(root.querySelectorAll("[data-h3-media-kind]")).find((element) => {
+      const rect = element.getBoundingClientRect();
+      return event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
+    });
+    return row?.dataset.h3MediaKind || null;
+  };
   const pointerIsOverBoard = (event) => {
     const rect = root.getBoundingClientRect();
     return event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
@@ -1280,9 +1303,13 @@ function createBoard(node) {
     if (!hasMediaTransfer(event) || !pointerIsOverBoard(event)) return;
     event.preventDefault(); event.stopImmediatePropagation();
     const card = cardsAtPointer(event);
+    const zoneKind = mediaKindAtPointer(event);
     clearDropHighlight();
     const files = transferFiles(event);
     if (card && transferCanIncludeKind(event, card._h3MediaKind)) await card._h3ReceiveFiles?.(files);
+    // Each media zone owns only its own file type.  A cross-zone drop is
+    // deliberately consumed here instead of being re-routed elsewhere.
+    else if (zoneKind) await root._h3AppendFiles?.(files, zoneKind);
     else await root._h3AppendFiles?.(files);
   };
   document.addEventListener("dragover", captureDragOver, true);
@@ -1367,6 +1394,7 @@ function createBoard(node) {
       const row = document.createElement("div");
       // Images are deliberately a 3 × 3 grid. Audio and video stay as three fixed cards in one row.
       row.className = kind === "image" ? "mb-image-grid" : "mb-row";
+      row.dataset.h3MediaKind = kind;
       for (let index = 0; index < LIMITS[kind]; index++) {
         row.appendChild(makeCard(kind, index, state[kind][index], (uploaded) => {
           compactMedia(state, kind);
@@ -1399,10 +1427,10 @@ function createBoard(node) {
     // Dropping on the node rather than a specific card fills the next free
     // position for each detected media type.  Route through that card so its
     // upload progress is visible for drag-and-drop and paste as well.
-    const appendFiles = async (files) => {
+    const appendFiles = async (files, onlyKind = null) => {
       for (const file of Array.from(files || [])) {
         const kind = kindForFile(file);
-        if (!kind) continue;
+        if (!kind || (onlyKind && kind !== onlyKind)) continue;
         const target = Array.from(root.querySelectorAll(".mb-card"))
           .find((card) => card._h3MediaKind === kind && !card._h3HasAsset && !card.classList.contains("uploading"));
         if (target) await target._h3ReceiveFiles?.([file]);
@@ -1414,7 +1442,7 @@ function createBoard(node) {
     };
     root.ondrop = async (event) => {
       if (!hasMediaTransfer(event)) return;
-      stop(event); await appendFiles(transferFiles(event));
+      stop(event); await appendFiles(transferFiles(event), mediaKindAtPointer(event));
     };
     root.onpaste = async (event) => {
       const files = clipboardFiles(event);
