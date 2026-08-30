@@ -41,6 +41,13 @@ class MultiLoRALoader:
                     "tooltip": "LoRA strength applied to the diffusion model.",
                 },
             )
+            required[f"enabled_{index}"] = (
+                "BOOLEAN",
+                {
+                    "default": True,
+                    "tooltip": "Keep the selected LoRA and its strength, but skip applying it when disabled.",
+                },
+            )
         return {"required": required}
 
     RETURN_TYPES = ("MODEL",)
@@ -49,7 +56,7 @@ class MultiLoRALoader:
     CATEGORY = "loaders"
     DESCRIPTION = (
         "Add LoRA rows with the + button. Rows are applied from top to bottom; "
-        "an empty LoRA row is bypassed."
+        "an empty or disabled LoRA row is bypassed."
     )
 
     def _load_file(self, lora_name):
@@ -67,12 +74,16 @@ class MultiLoRALoader:
         applied_loras = []
         for index in range(1, active_count + 1):
             lora_name = kwargs.get(f"lora_{index}", EMPTY_LORA)
+            lora_enabled = kwargs.get(f"enabled_{index}", True)
             # Dynamic rows that have just been revealed can be serialized as
             # null by the frontend until the user touches their strength
             # widget. Treat that empty value as the documented default.
             raw_strength = kwargs.get(f"model_strength_{index}", 1.0)
             model_strength = 1.0 if raw_strength in (None, "") else float(raw_strength)
             if lora_name in (None, "", EMPTY_LORA, "None"):
+                continue
+            if not bool(lora_enabled):
+                print(f"[多 LoRA 加载器] 跳过第 {index} 条（已关闭）：{lora_name}")
                 continue
             if model_strength == 0:
                 continue

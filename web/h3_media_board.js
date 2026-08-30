@@ -2208,6 +2208,7 @@ function multiLoraRow(node, index) {
   return [
     multiLoraWidget(node, `lora_${index}`),
     multiLoraWidget(node, `model_strength_${index}`),
+    multiLoraWidget(node, `enabled_${index}`),
   ].filter(Boolean);
 }
 
@@ -2318,8 +2319,10 @@ function refreshMultiLora(node, count = multiLoraCount(node)) {
   for (let index = 1; index <= MULTI_LORA_MAX; index++) {
     const lora = multiLoraWidget(node, `lora_${index}`);
     const strength = multiLoraWidget(node, `model_strength_${index}`);
+    const enabled = multiLoraWidget(node, `enabled_${index}`);
     setMultiLoraDefault(lora, "(空 / 绕过)");
     setMultiLoraDefault(strength, 1.0);
+    setMultiLoraDefault(enabled, true);
     for (const widget of multiLoraRow(node, index)) {
       multiLoraSetVisible(widget, index <= safeCount);
     }
@@ -2348,9 +2351,10 @@ function createMultiLoraLoader(node) {
   node._multiLoraReady = true;
 
   for (let index = 1; index <= MULTI_LORA_MAX; index++) {
-    const [lora, strength] = multiLoraRow(node, index);
+    const [lora, strength, enabled] = multiLoraRow(node, index);
     if (lora) lora.label = `LoRA ${index}`;
     if (strength) strength.label = `模型强度 ${index}`;
+    if (enabled) enabled.label = `启用 LoRA ${index}`;
   }
 
   const add = node.addWidget("button", "＋ 添加 LoRA", null, () => {
@@ -2371,12 +2375,28 @@ app.registerExtension({
   beforeConfigureGraph(graphData) {
     for (const node of graphData?.nodes ?? []) {
       if (!isMultiLoraNode(node) || !Array.isArray(node.widgets_values)) continue;
+      const hasLegacyClip = (node.inputs || []).some(
+        (input) => String(input?.name || "").toLowerCase() === "clip",
+      ) || (node.outputs || []).some(
+        (output) => String(output?.name || "").toLowerCase() === "clip",
+      );
       // The first version stored one CLIP strength after every LoRA row.
-      // Remove those values before restoring this model-only version.
-      if (node.widgets_values.length < 1 + MULTI_LORA_MAX * 3) continue;
-      for (let index = MULTI_LORA_MAX; index >= 1; index--) {
-        node.widgets_values.splice(1 + (index - 1) * 3 + 2, 1);
+      // Remove those values before migrating the old two-widget rows below.
+      if (hasLegacyClip && node.widgets_values.length >= 1 + MULTI_LORA_MAX * 3) {
+        for (let index = MULTI_LORA_MAX; index >= 1; index--) {
+          node.widgets_values.splice(1 + (index - 1) * 3 + 2, 1);
+        }
       }
+      // Existing workflows have (LoRA, strength) pairs. Insert enabled=true
+      // after each pair so their saved selections and strengths stay aligned.
+      if (node.widgets_values.length >= 1 + MULTI_LORA_MAX * 2
+          && node.widgets_values.length < 1 + MULTI_LORA_MAX * 3) {
+        for (let index = MULTI_LORA_MAX; index >= 1; index--) {
+          node.widgets_values.splice(1 + (index - 1) * 2 + 2, 0, true);
+        }
+      }
+      node.properties ??= {};
+      node.properties.multi_lora_schema_version = 2;
     }
   },
   beforeRegisterNodeDef(nodeType, nodeData) {
