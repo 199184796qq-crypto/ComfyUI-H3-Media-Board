@@ -2188,34 +2188,25 @@ function decorateMultiTimeGuide(node) {
   decorateDynamicGuide(node, "guide");
 }
 
-// Multi LoRA loader --------------------------------------------------------
-// Keep this UI in the main Media Board extension file. This ComfyUI build
-// only auto-runs the package's existing entry script, not additional JS files.
-const MULTI_LORA_NODE = "MultiLoRALoader";
-const MULTI_LORA_MAX = 16;
+// Stable multi LoRA loader -------------------------------------------------
+// This node intentionally uses only backend-declared widgets. Newer ComfyUI
+// frontends serialize dynamically added widgets even when serialize=false;
+// keeping this list fixed prevents saved strengths and LoRA names from moving.
+const STABLE_MULTI_LORA_NODE = "StableMultiLoRALoader";
+const STABLE_MULTI_LORA_MAX = 16;
 
-function isMultiLoraNode(node) {
-  return node?.comfyClass === MULTI_LORA_NODE
-    || node?.type === MULTI_LORA_NODE
-    || node?.title === "多 LoRA 加载器";
+function isStableMultiLoraNode(node) {
+  return node?.comfyClass === STABLE_MULTI_LORA_NODE || node?.type === STABLE_MULTI_LORA_NODE;
 }
 
-function multiLoraWidget(node, name) {
+function stableMultiLoraWidget(node, name) {
   return node.widgets?.find((widget) => widget.name === name);
 }
 
-function multiLoraRow(node, index) {
-  return [
-    multiLoraWidget(node, `lora_${index}`),
-    multiLoraWidget(node, `model_strength_${index}`),
-    multiLoraWidget(node, `enabled_${index}`),
-  ].filter(Boolean);
-}
-
-function multiLoraSetVisible(widget, visible) {
+function setStableMultiLoraVisible(widget, visible) {
   if (!widget) return;
-  if (!widget._multiLoraOriginal) {
-    widget._multiLoraOriginal = {
+  if (!widget._stableMultiLoraOriginal) {
+    widget._stableMultiLoraOriginal = {
       computeSize: widget.computeSize,
       draw: widget.draw,
     };
@@ -2226,173 +2217,64 @@ function multiLoraSetVisible(widget, visible) {
   if (widget._state) widget._state.hidden = !visible;
   if (widget.element) widget.element.style.display = visible ? "" : "none";
   if (visible) {
-    widget.computeSize = widget._multiLoraOriginal.computeSize;
-    widget.draw = widget._multiLoraOriginal.draw;
+    widget.computeSize = widget._stableMultiLoraOriginal.computeSize;
+    widget.draw = widget._stableMultiLoraOriginal.draw;
   } else {
     widget.computeSize = () => [0, -4];
     widget.draw = () => {};
   }
 }
 
-function reorderMultiLoraWidgets(node, count) {
-  if (!node.widgets) return;
-  const countWidget = multiLoraWidget(node, "lora_count");
-  const rows = [];
-  const active = [];
-  const inactive = [];
-  for (let index = 1; index <= MULTI_LORA_MAX; index++) {
-    const row = multiLoraRow(node, index);
-    rows.push(...row);
-    (index <= count ? active : inactive).push(...row);
-  }
-  const buttons = node.widgets.filter((widget) => widget._multiLoraAction);
-  const managed = new Set([countWidget, ...rows, ...buttons].filter(Boolean));
-  const others = node.widgets.filter((widget) => !managed.has(widget));
-  // Keep the action buttons immediately after the last visible row. Some
-  // LiteGraph builds still hit-test collapsed widgets, so leaving the hidden
-  // rows before the buttons makes a visible button look clickable but routes
-  // the mouse event to an invisible combo instead.
-  node.widgets = [
-    ...(countWidget ? [countWidget] : []),
-    ...others,
-    ...active,
-    ...buttons,
-    ...inactive,
-  ];
-}
-
-function multiLoraCount(node) {
-  const saved = Number(node.properties?.multi_lora_count);
-  const widgetValue = Number(multiLoraWidget(node, "lora_count")?.value);
-  return Math.max(
-    1,
-    Math.min(MULTI_LORA_MAX, Number.isFinite(saved) ? saved : widgetValue || 1),
-  );
-}
-
-function setMultiLoraDefault(widget, value) {
-  if (!widget || (widget.value !== null && widget.value !== undefined && widget.value !== "")) {
-    return;
-  }
-  widget.value = value;
-  // Recent ComfyUI widget wrappers keep a mirrored state object. Update it
-  // too so an old workflow containing null widget values is serialized with
-  // the real defaults immediately, before backend prompt validation runs.
-  if (widget._state) widget._state.value = value;
-}
-
-function refreshMultiLora(node, count = multiLoraCount(node)) {
-  const safeCount = Math.max(1, Math.min(MULTI_LORA_MAX, Number(count) || 1));
-  node.properties ??= {};
-  node.properties.multi_lora_count = safeCount;
-
-  const countWidget = multiLoraWidget(node, "lora_count");
-  setMultiLoraDefault(countWidget, safeCount);
+function refreshStableMultiLora(node, requestedCount) {
+  const countWidget = stableMultiLoraWidget(node, "lora_count");
+  const count = Math.max(1, Math.min(
+    STABLE_MULTI_LORA_MAX,
+    Number(requestedCount ?? countWidget?.value) || 1,
+  ));
   if (countWidget) {
-    countWidget.value = safeCount;
-    if (countWidget._state) countWidget._state.value = safeCount;
-    multiLoraSetVisible(countWidget, false);
+    countWidget.label = "LoRA 数量（点击左右箭头 ＋／－）";
+    countWidget.value = count;
+    if (countWidget._state) countWidget._state.value = count;
+    setStableMultiLoraVisible(countWidget, true);
   }
-
-  for (let index = 1; index <= MULTI_LORA_MAX; index++) {
-    const lora = multiLoraWidget(node, `lora_${index}`);
-    const strength = multiLoraWidget(node, `model_strength_${index}`);
-    const enabled = multiLoraWidget(node, `enabled_${index}`);
-    setMultiLoraDefault(lora, "(空 / 绕过)");
-    setMultiLoraDefault(strength, 1.0);
-    setMultiLoraDefault(enabled, true);
-    for (const widget of multiLoraRow(node, index)) {
-      multiLoraSetVisible(widget, index <= safeCount);
-    }
+  for (let index = 1; index <= STABLE_MULTI_LORA_MAX; index++) {
+    const widgets = [
+      stableMultiLoraWidget(node, `lora_${index}`),
+      stableMultiLoraWidget(node, `model_strength_${index}`),
+      stableMultiLoraWidget(node, `clip_strength_${index}`),
+      stableMultiLoraWidget(node, `bypass_${index}`),
+    ];
+    const labels = [`LoRA ${index}`, `模型强度 ${index}`, `CLIP 强度 ${index}`, `绕过 LoRA ${index}`];
+    widgets.forEach((widget, offset) => {
+      if (!widget) return;
+      widget.label = labels[offset];
+      setStableMultiLoraVisible(widget, index <= count);
+    });
   }
-  reorderMultiLoraWidgets(node, safeCount);
   const size = node.computeSize?.();
-  if (size) {
-    // Adding/removing rows changes only vertical space. Keep the width the
-    // user has already dragged the node to instead of snapping it back to
-    // LiteGraph's computed default width.
-    const currentWidth = Number(node.size?.[0]);
-    node.setSize?.([
-      Number.isFinite(currentWidth) && currentWidth > 0 ? currentWidth : size[0],
-      size[1],
-    ]);
-  }
+  if (size) node.setSize?.([Math.max(Number(node.size?.[0]) || 0, size[0]), size[1]]);
   node.graph?.setDirtyCanvas?.(true, true);
 }
 
-function createMultiLoraLoader(node) {
-  if (node._multiLoraReady) {
-    refreshMultiLora(node);
+function createStableMultiLoraLoader(node) {
+  if (node._stableMultiLoraReady) {
+    refreshStableMultiLora(node);
     return;
   }
-  node._multiLoraReady = true;
-  node.properties ??= {};
-  node.properties.multi_lora_schema_version = 4;
-
-  for (let index = 1; index <= MULTI_LORA_MAX; index++) {
-    const [lora, strength, enabled] = multiLoraRow(node, index);
-    if (lora) lora.label = `LoRA ${index}`;
-    if (strength) strength.label = `模型强度 ${index}`;
-    if (enabled) enabled.label = `启用 LoRA ${index}`;
+  node._stableMultiLoraReady = true;
+  const countWidget = stableMultiLoraWidget(node, "lora_count");
+  if (countWidget) {
+    const priorCallback = countWidget.callback;
+    countWidget.callback = (value, ...args) => {
+      priorCallback?.call(countWidget, value, ...args);
+      refreshStableMultiLora(node, value);
+    };
   }
-
-  const add = node.addWidget("button", "＋ 添加 LoRA", null, () => {
-    refreshMultiLora(node, multiLoraCount(node) + 1);
-  });
-  add._multiLoraAction = "add";
-  add.serialize = false;
-  const remove = node.addWidget("button", "－ 减少 LoRA", null, () => {
-    refreshMultiLora(node, multiLoraCount(node) - 1);
-  });
-  remove._multiLoraAction = "remove";
-  remove.serialize = false;
-  refreshMultiLora(node);
+  refreshStableMultiLora(node);
 }
 
 app.registerExtension({
   name: "h3.media_board",
-  beforeConfigureGraph(graphData) {
-    for (const node of graphData?.nodes ?? []) {
-      if (!isMultiLoraNode(node) || !Array.isArray(node.widgets_values)) continue;
-      const schemaVersion = Number(node.properties?.multi_lora_schema_version || 0);
-      const hasLegacyClip = (node.inputs || []).some(
-        (input) => String(input?.name || "").toLowerCase() === "clip",
-      ) || (node.outputs || []).some(
-        (output) => String(output?.name || "").toLowerCase() === "clip",
-      );
-      // The first version stored one CLIP strength after every LoRA row.
-      // The current version uses the CLIP socket directly, with the same
-      // strength as its MODEL counterpart. Remove only those obsolete values.
-      if (schemaVersion < 2 && hasLegacyClip
-          && node.widgets_values.length >= 1 + MULTI_LORA_MAX * 3) {
-        for (let index = MULTI_LORA_MAX; index >= 1; index--) {
-          node.widgets_values.splice(1 + (index - 1) * 3 + 2, 1);
-        }
-      }
-      // Version 2 briefly stored each enabled value immediately after its
-      // LoRA/strength pair. Move those values to the end of the schema.
-      if ((schemaVersion === 2 || schemaVersion === 3)
-          && node.widgets_values.length >= 1 + MULTI_LORA_MAX * 3) {
-        const values = node.widgets_values;
-        const head = values.slice(0, 1);
-        const pairs = [];
-        const enabled = [];
-        for (let index = 0; index < MULTI_LORA_MAX; index++) {
-          pairs.push(values[1 + index * 3], values[1 + index * 3 + 1]);
-          enabled.push(values[1 + index * 3 + 2]);
-        }
-        node.widgets_values = [...head, ...pairs, ...enabled];
-      }
-      // Older workflows have only (LoRA, strength) pairs. Append enabled=true
-      // controls without changing any of their existing positions.
-      if (node.widgets_values.length >= 1 + MULTI_LORA_MAX * 2
-          && node.widgets_values.length < 1 + MULTI_LORA_MAX * 3) {
-        node.widgets_values.push(...Array(MULTI_LORA_MAX).fill(true));
-      }
-      node.properties ??= {};
-      node.properties.multi_lora_schema_version = 4;
-    }
-  },
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData?.name === "H3MediaBoard") {
       const priorConfigure = nodeType.prototype.onConfigure;
@@ -2422,13 +2304,13 @@ app.registerExtension({
     if (node.comfyClass === "H3VideoModeControl") decorateVideoModeControl(node);
     if (node.comfyClass === "H3SecondPassPreparation") decorateSecondPassPreparation(node);
     if (node.comfyClass === "H3MultiTimeGuide") decorateMultiTimeGuide(node);
-    if (isMultiLoraNode(node)) {
-      requestAnimationFrame(() => createMultiLoraLoader(node));
+    if (isStableMultiLoraNode(node)) {
+      requestAnimationFrame(() => createStableMultiLoraLoader(node));
     }
   },
   loadedGraphNode(node) {
-    if (isMultiLoraNode(node)) {
-      requestAnimationFrame(() => createMultiLoraLoader(node));
+    if (isStableMultiLoraNode(node)) {
+      requestAnimationFrame(() => createStableMultiLoraLoader(node));
     }
     if (node.comfyClass === "H3MediaBoard") {
       requestAnimationFrame(() => restoreBoardWorkflowState(node));
