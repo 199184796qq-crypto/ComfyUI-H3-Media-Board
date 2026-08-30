@@ -21,7 +21,6 @@ class MultiLoRALoader:
         lora_choices = [EMPTY_LORA] + folder_paths.get_filename_list("loras")
         required = {
             "model": ("MODEL", {"tooltip": "Base diffusion model."}),
-            "clip": ("CLIP", {"tooltip": "Base text encoder."}),
             "lora_count": (
                 "INT",
                 {"default": 1, "min": 1, "max": cls.MAX_LORAS, "step": 1},
@@ -42,20 +41,10 @@ class MultiLoRALoader:
                     "tooltip": "LoRA strength applied to the diffusion model.",
                 },
             )
-            required[f"clip_strength_{index}"] = (
-                "FLOAT",
-                {
-                    "default": 1.0,
-                    "min": -100.0,
-                    "max": 100.0,
-                    "step": 0.01,
-                    "tooltip": "LoRA strength applied to CLIP / text encoder.",
-                },
-            )
         return {"required": required}
 
-    RETURN_TYPES = ("MODEL", "CLIP")
-    RETURN_NAMES = ("MODEL", "CLIP")
+    RETURN_TYPES = ("MODEL",)
+    RETURN_NAMES = ("MODEL",)
     FUNCTION = "load_loras"
     CATEGORY = "loaders"
     DESCRIPTION = (
@@ -73,28 +62,45 @@ class MultiLoRALoader:
             self._cache = {path: cached}
         return cached
 
-    def load_loras(self, model, clip, lora_count=1, **kwargs):
+    def load_loras(self, model, lora_count=1, **kwargs):
         active_count = max(1, min(self.MAX_LORAS, int(lora_count)))
+        applied_loras = []
         for index in range(1, active_count + 1):
             lora_name = kwargs.get(f"lora_{index}", EMPTY_LORA)
-            model_strength = float(kwargs.get(f"model_strength_{index}", 1.0))
-            clip_strength = float(kwargs.get(f"clip_strength_{index}", 1.0))
-
+            # Dynamic rows that have just been revealed can be serialized as
+            # null by the frontend until the user touches their strength
+            # widget. Treat that empty value as the documented default.
+            raw_strength = kwargs.get(f"model_strength_{index}", 1.0)
+            model_strength = 1.0 if raw_strength in (None, "") else float(raw_strength)
             if lora_name in (None, "", EMPTY_LORA, "None"):
                 continue
-            if model_strength == 0 and clip_strength == 0:
+            if model_strength == 0:
                 continue
 
+            print(
+                f"[多 LoRA 加载器] 正在加载第 {index} 条：{lora_name} "
+                f"（模型强度 {model_strength:g}）"
+            )
             lora, metadata = self._load_file(lora_name)
-            model, clip = comfy.sd.load_lora_for_models(
+            model, _ = comfy.sd.load_lora_for_models(
                 model,
-                clip,
+                None,
                 lora,
                 model_strength,
-                clip_strength,
+                0,
                 lora_metadata=metadata,
             )
-        return (model, clip)
+            applied_loras.append(f"第 {index} 条 {lora_name}")
+        if applied_loras:
+            print(
+                f"[多 LoRA 加载器] 加载完成：共 {len(applied_loras)} 条，"
+                f"活动行 {active_count} 条。"
+            )
+        else:
+            print(
+                f"[多 LoRA 加载器] 未加载 LoRA：{active_count} 条活动行均为空或模型强度为 0。"
+            )
+        return (model,)
 
 
 NODE_CLASS_MAPPINGS = {"MultiLoRALoader": MultiLoRALoader}

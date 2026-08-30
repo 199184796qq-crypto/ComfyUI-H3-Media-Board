@@ -2188,8 +2188,197 @@ function decorateMultiTimeGuide(node) {
   decorateDynamicGuide(node, "guide");
 }
 
+// Multi LoRA loader --------------------------------------------------------
+// Keep this UI in the main Media Board extension file. This ComfyUI build
+// only auto-runs the package's existing entry script, not additional JS files.
+const MULTI_LORA_NODE = "MultiLoRALoader";
+const MULTI_LORA_MAX = 16;
+
+function isMultiLoraNode(node) {
+  return node?.comfyClass === MULTI_LORA_NODE
+    || node?.type === MULTI_LORA_NODE
+    || node?.title === "多 LoRA 加载器";
+}
+
+function multiLoraWidget(node, name) {
+  return node.widgets?.find((widget) => widget.name === name);
+}
+
+function multiLoraRow(node, index) {
+  return [
+    multiLoraWidget(node, `lora_${index}`),
+    multiLoraWidget(node, `model_strength_${index}`),
+  ].filter(Boolean);
+}
+
+function removeLegacyMultiLoraClip(node) {
+  // Workflows created by the first node version still carry a CLIP input,
+  // CLIP output and clip_strength widgets in their serialized node state.
+  // The current backend is model-only, so strip those stale UI elements when
+  // an old workflow is opened instead of requiring the user to rebuild it.
+  for (let index = (node.inputs?.length || 0) - 1; index >= 0; index--) {
+    if (String(node.inputs[index]?.name || "").toLowerCase() !== "clip") continue;
+    node.disconnectInput?.(index);
+    node.removeInput?.(index);
+  }
+  for (let index = (node.outputs?.length || 0) - 1; index >= 0; index--) {
+    if (String(node.outputs[index]?.name || "").toLowerCase() !== "clip") continue;
+    node.disconnectOutput?.(index);
+    node.removeOutput?.(index);
+  }
+  if (node.widgets) {
+    node.widgets = node.widgets.filter(
+      (widget) => !/^clip_strength_\d+$/.test(String(widget.name || "")),
+    );
+  }
+}
+
+function multiLoraSetVisible(widget, visible) {
+  if (!widget) return;
+  if (!widget._multiLoraOriginal) {
+    widget._multiLoraOriginal = {
+      computeSize: widget.computeSize,
+      draw: widget.draw,
+    };
+  }
+  widget.hidden = !visible;
+  widget.options ??= {};
+  widget.options.hidden = !visible;
+  if (widget._state) widget._state.hidden = !visible;
+  if (widget.element) widget.element.style.display = visible ? "" : "none";
+  if (visible) {
+    widget.computeSize = widget._multiLoraOriginal.computeSize;
+    widget.draw = widget._multiLoraOriginal.draw;
+  } else {
+    widget.computeSize = () => [0, -4];
+    widget.draw = () => {};
+  }
+}
+
+function reorderMultiLoraWidgets(node, count) {
+  if (!node.widgets) return;
+  const countWidget = multiLoraWidget(node, "lora_count");
+  const rows = [];
+  const active = [];
+  const inactive = [];
+  for (let index = 1; index <= MULTI_LORA_MAX; index++) {
+    const row = multiLoraRow(node, index);
+    rows.push(...row);
+    (index <= count ? active : inactive).push(...row);
+  }
+  const buttons = node.widgets.filter((widget) => widget._multiLoraAction);
+  const managed = new Set([countWidget, ...rows, ...buttons].filter(Boolean));
+  const others = node.widgets.filter((widget) => !managed.has(widget));
+  // Keep the action buttons immediately after the last visible row. Some
+  // LiteGraph builds still hit-test collapsed widgets, so leaving the hidden
+  // rows before the buttons makes a visible button look clickable but routes
+  // the mouse event to an invisible combo instead.
+  node.widgets = [
+    ...(countWidget ? [countWidget] : []),
+    ...others,
+    ...active,
+    ...buttons,
+    ...inactive,
+  ];
+}
+
+function multiLoraCount(node) {
+  const saved = Number(node.properties?.multi_lora_count);
+  const widgetValue = Number(multiLoraWidget(node, "lora_count")?.value);
+  return Math.max(
+    1,
+    Math.min(MULTI_LORA_MAX, Number.isFinite(saved) ? saved : widgetValue || 1),
+  );
+}
+
+function setMultiLoraDefault(widget, value) {
+  if (!widget || (widget.value !== null && widget.value !== undefined && widget.value !== "")) {
+    return;
+  }
+  widget.value = value;
+  // Recent ComfyUI widget wrappers keep a mirrored state object. Update it
+  // too so an old workflow containing null widget values is serialized with
+  // the real defaults immediately, before backend prompt validation runs.
+  if (widget._state) widget._state.value = value;
+}
+
+function refreshMultiLora(node, count = multiLoraCount(node)) {
+  const safeCount = Math.max(1, Math.min(MULTI_LORA_MAX, Number(count) || 1));
+  node.properties ??= {};
+  node.properties.multi_lora_count = safeCount;
+
+  const countWidget = multiLoraWidget(node, "lora_count");
+  setMultiLoraDefault(countWidget, safeCount);
+  if (countWidget) {
+    countWidget.value = safeCount;
+    if (countWidget._state) countWidget._state.value = safeCount;
+    multiLoraSetVisible(countWidget, false);
+  }
+
+  for (let index = 1; index <= MULTI_LORA_MAX; index++) {
+    const lora = multiLoraWidget(node, `lora_${index}`);
+    const strength = multiLoraWidget(node, `model_strength_${index}`);
+    setMultiLoraDefault(lora, "(空 / 绕过)");
+    setMultiLoraDefault(strength, 1.0);
+    for (const widget of multiLoraRow(node, index)) {
+      multiLoraSetVisible(widget, index <= safeCount);
+    }
+  }
+  reorderMultiLoraWidgets(node, safeCount);
+  const size = node.computeSize?.();
+  if (size) {
+    // Adding/removing rows changes only vertical space. Keep the width the
+    // user has already dragged the node to instead of snapping it back to
+    // LiteGraph's computed default width.
+    const currentWidth = Number(node.size?.[0]);
+    node.setSize?.([
+      Number.isFinite(currentWidth) && currentWidth > 0 ? currentWidth : size[0],
+      size[1],
+    ]);
+  }
+  node.graph?.setDirtyCanvas?.(true, true);
+}
+
+function createMultiLoraLoader(node) {
+  removeLegacyMultiLoraClip(node);
+  if (node._multiLoraReady) {
+    refreshMultiLora(node);
+    return;
+  }
+  node._multiLoraReady = true;
+
+  for (let index = 1; index <= MULTI_LORA_MAX; index++) {
+    const [lora, strength] = multiLoraRow(node, index);
+    if (lora) lora.label = `LoRA ${index}`;
+    if (strength) strength.label = `模型强度 ${index}`;
+  }
+
+  const add = node.addWidget("button", "＋ 添加 LoRA", null, () => {
+    refreshMultiLora(node, multiLoraCount(node) + 1);
+  });
+  add._multiLoraAction = "add";
+  add.serialize = false;
+  const remove = node.addWidget("button", "－ 减少 LoRA", null, () => {
+    refreshMultiLora(node, multiLoraCount(node) - 1);
+  });
+  remove._multiLoraAction = "remove";
+  remove.serialize = false;
+  refreshMultiLora(node);
+}
+
 app.registerExtension({
   name: "h3.media_board",
+  beforeConfigureGraph(graphData) {
+    for (const node of graphData?.nodes ?? []) {
+      if (!isMultiLoraNode(node) || !Array.isArray(node.widgets_values)) continue;
+      // The first version stored one CLIP strength after every LoRA row.
+      // Remove those values before restoring this model-only version.
+      if (node.widgets_values.length < 1 + MULTI_LORA_MAX * 3) continue;
+      for (let index = MULTI_LORA_MAX; index >= 1; index--) {
+        node.widgets_values.splice(1 + (index - 1) * 3 + 2, 1);
+      }
+    }
+  },
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData?.name === "H3MediaBoard") {
       const priorConfigure = nodeType.prototype.onConfigure;
@@ -2219,8 +2408,14 @@ app.registerExtension({
     if (node.comfyClass === "H3VideoModeControl") decorateVideoModeControl(node);
     if (node.comfyClass === "H3SecondPassPreparation") decorateSecondPassPreparation(node);
     if (node.comfyClass === "H3MultiTimeGuide") decorateMultiTimeGuide(node);
+    if (isMultiLoraNode(node)) {
+      requestAnimationFrame(() => createMultiLoraLoader(node));
+    }
   },
   loadedGraphNode(node) {
+    if (isMultiLoraNode(node)) {
+      requestAnimationFrame(() => createMultiLoraLoader(node));
+    }
     if (node.comfyClass === "H3MediaBoard") {
       requestAnimationFrame(() => restoreBoardWorkflowState(node));
     }
