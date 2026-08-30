@@ -460,12 +460,15 @@ class H3MediaBoard:
                 "aspect_ratio": (list(ASPECT_RATIOS.keys()), {"default": "9:16"}),
                 "megapixels": ("FLOAT", {"default": 0.4, "min": 0.1, "max": 16.0, "step": 0.1}),
                 "multiple": ("INT", {"default": 32, "min": 8, "max": 128, "step": 4}),
-                "second_pass_scale": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 4.0, "step": 0.1}),
                 "auto_calculate": ("BOOLEAN", {"default": True, "label_on": "自动计算帧数", "label_off": "手动帧数"}),
                 "manual_frames": ("INT", {"default": 362, "min": 1, "max": 10000, "step": 1}),
                 "noise_seed": ("INT", {"default": 0, "min": 0, "max": MAX_SEED}),
                 "noise_mode": (["fixed", "random_each_queue", "reuse_last_queue"], {"default": "fixed"}),
                 "noise_after_generate": (["fixed", "randomize", "increment", "decrement"], {"default": "randomize"}),
+                # Keep additions at the end: ComfyUI serializes existing
+                # workflow widget values by position, so inserting here would
+                # shift old seed and mode values into incompatible inputs.
+                "second_pass_scale": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 4.0, "step": 0.1}),
             },
             # A separate forced input guarantees a visible socket in both the
             # legacy canvas and Nodes 2.0.  The local textarea remains usable
@@ -485,9 +488,10 @@ class H3MediaBoard:
         return float("nan") if noise_mode == "random_each_queue" else noise_mode
 
     def collect(self, prompt: str, media_manifest: str, duration: float, aspect_ratio: str,
-                megapixels: float, multiple: int, second_pass_scale: float, auto_calculate: bool, manual_frames: int,
+                megapixels: float, multiple: int, auto_calculate: bool, manual_frames: int,
                 noise_seed: int, noise_mode: str, external_prompt: str | None = None,
-                unique_id: str | None = None, noise_after_generate: str = "randomize"):
+                unique_id: str | None = None, noise_after_generate: str = "randomize",
+                second_pass_scale: float = 1.0):
         manifest = _clean_manifest(media_manifest)
         effective_prompt = external_prompt if external_prompt is not None else prompt
         manifest["prompt"] = effective_prompt

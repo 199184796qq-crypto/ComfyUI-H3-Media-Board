@@ -234,7 +234,12 @@ function injectStyle() {
     .h3-media-board .mb-noise-action { width:132px; height:29px; padding:0 8px; border:1px solid #645588; border-radius:5px; color:#e9e2ff; background:#332b48; cursor:pointer; font:11px system-ui, sans-serif; white-space:nowrap; }
     .h3-media-board .mb-noise-action:hover { border-color:#c7b2ff; background:#443862; }
     .h3-media-board .mb-noise-status { grid-column:1 / -1; justify-self:start; width:fit-content; max-width:100%; padding:6px 8px; border-left:3px solid #b998ff; border-radius:4px; color:#d8ccff; background:#211d30; font-size:11px; }
-    .h3-media-board .mb-prompt-shell { position:relative; display:flex; flex:1 1 auto; min-height:145px; margin:9px 0 4px; }
+    .h3-media-board .mb-prompt-shell { position:relative; display:flex; flex:1 1 auto; flex-direction:column; min-height:145px; margin:9px 0 4px; }
+    .h3-media-board .mb-prompt-actions { display:flex; align-items:center; justify-content:flex-end; gap:6px; margin:0 2px 6px; }
+    .h3-media-board .mb-prompt-action { height:25px; padding:0 10px; border:1px solid #4c626a; border-radius:5px; color:#dcebf0; background:#1b292f; cursor:pointer; font:700 11px system-ui, sans-serif; transition:background .16s ease,border-color .16s ease,color .16s ease; }
+    .h3-media-board .mb-prompt-action:hover { border-color:#78d7e3; color:#f5fcff; background:#25434d; }
+    .h3-media-board .mb-prompt-action-clear { color:#ffc6c8; border-color:#734d53; background:#352127; }
+    .h3-media-board .mb-prompt-action-clear:hover { border-color:#ef7a80; color:#fff0f1; background:#51282e; }
     .h3-media-board .mb-prompt-editor { box-sizing:border-box; width:100%; min-height:145px; padding:8px; overflow:auto; color:#ececec; background:#15181b; border:1px solid #586168; border-radius:6px; outline:none; white-space:pre-wrap; overflow-wrap:anywhere; user-select:text; font:12px ui-monospace, Consolas, monospace; }
     .h3-media-board .mb-prompt-editor:focus { border-color:#78d7e3; box-shadow:0 0 0 2px #78d7e322; }
     .h3-media-board .mb-prompt-editor:empty::before { content:attr(data-placeholder); color:#707981; pointer-events:none; }
@@ -686,6 +691,8 @@ function makeNoisePanel(widgets, node) {
 function makePromptEditor(promptWidget, node, getState, saveBackup, onPromptChanged = null) {
   const shell = document.createElement("div");
   shell.className = "mb-prompt-shell";
+  const actions = document.createElement("div");
+  actions.className = "mb-prompt-actions";
   const editor = document.createElement("div");
   editor.className = "mb-prompt-editor";
   editor.contentEditable = "true";
@@ -694,7 +701,7 @@ function makePromptEditor(promptWidget, node, getState, saveBackup, onPromptChan
   const menu = document.createElement("div");
   menu.className = "mb-mention-menu";
   menu.hidden = true;
-  shell.append(editor, menu);
+  shell.append(actions, editor, menu);
 
   const referencePreview = document.createElement("div");
   referencePreview.className = "mb-reference-preview"; referencePreview.hidden = true;
@@ -933,6 +940,50 @@ function makePromptEditor(promptWidget, node, getState, saveBackup, onPromptChan
     onPromptChanged?.(value);
     saveBackup(); node.graph?.setDirtyCanvas(true, true);
   };
+  const setPromptText = (value, focus = false) => {
+    hideMenu();
+    renderText(String(value || ""));
+    commit();
+    if (focus) editor.focus({ preventScroll: true });
+  };
+  const makeAction = (label, className, onClick) => {
+    const button = document.createElement("button");
+    button.type = "button"; button.className = `mb-prompt-action ${className}`; button.textContent = label;
+    button.onclick = onClick; actions.appendChild(button);
+    return button;
+  };
+  const flashAction = (button, label, delay = 1200) => {
+    const original = button.dataset.label || button.textContent;
+    button.dataset.label = original; button.textContent = label;
+    setTimeout(() => { if (button.isConnected) button.textContent = original; }, delay);
+  };
+  makeAction("复制", "mb-prompt-action-copy", async (event) => {
+    stop(event);
+    const value = currentText();
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("clipboard write unavailable");
+      await navigator.clipboard.writeText(value);
+      flashAction(event.currentTarget, "已复制");
+    } catch (_) {
+      const fallback = document.createElement("textarea"); fallback.value = value; fallback.style.position = "fixed"; fallback.style.opacity = "0";
+      document.body.appendChild(fallback); fallback.select();
+      const copied = document.execCommand?.("copy"); fallback.remove();
+      flashAction(event.currentTarget, copied ? "已复制" : "复制失败");
+    }
+  });
+  makeAction("粘贴", "mb-prompt-action-paste", async (event) => {
+    stop(event);
+    try {
+      const value = await navigator.clipboard?.readText();
+      if (typeof value !== "string") throw new Error("clipboard text unavailable");
+      setPromptText(value, true); flashAction(event.currentTarget, "已粘贴");
+    } catch (_) {
+      flashAction(event.currentTarget, "请 Ctrl+V", 1600); editor.focus({ preventScroll: true });
+    }
+  });
+  makeAction("清除", "mb-prompt-action-clear", (event) => {
+    stop(event); setPromptText("", true); flashAction(event.currentTarget, "已清除");
+  });
   const pick = (item) => {
     if (!mention) return;
     const value = currentText();
@@ -1040,6 +1091,22 @@ function createBoard(node) {
       if (persisted.settings?.[name] !== undefined) widget.value = persisted.settings[name];
     }
   }
+  // A short-lived schema put the second-pass scale in the middle of the
+  // serialized widget list. Repair only impossible values it may have left in
+  // a browser-session backup; valid user settings are never changed here.
+  const repairLegacySettings = () => {
+    const validModes = new Set(["fixed", "random_each_queue", "reuse_last_queue"]);
+    const validAfterGenerate = new Set(["fixed", "randomize", "increment", "decrement"]);
+    const seed = Number(settingsWidgets.noise_seed.value);
+    if (!Number.isSafeInteger(seed) || seed < 0 || seed > 9007199254740991) settingsWidgets.noise_seed.value = 0;
+    if (!validModes.has(settingsWidgets.noise_mode.value)) settingsWidgets.noise_mode.value = "fixed";
+    if (!validAfterGenerate.has(settingsWidgets.noise_after_generate.value)) settingsWidgets.noise_after_generate.value = "randomize";
+    const frames = Number(settingsWidgets.manual_frames.value);
+    if (!Number.isFinite(frames) || frames < 1 || frames > 10000) settingsWidgets.manual_frames.value = 362;
+    const scale = Number(settingsWidgets.second_pass_scale.value);
+    if (!Number.isFinite(scale) || scale < 1 || scale > 4) settingsWidgets.second_pass_scale.value = 1.0;
+  };
+  repairLegacySettings();
 
   const root = document.createElement("div"); root.className = "h3-media-board"; root.tabIndex = 0;
   const cloneSnapshot = (value) => JSON.parse(JSON.stringify(value));
