@@ -470,8 +470,8 @@ class H3MediaBoard:
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
-    RETURN_TYPES = ("H3_MEDIA_BOARD",)
-    RETURN_NAMES = ("media_board",)
+    RETURN_TYPES = ("H3_MEDIA_BOARD", "NOISE")
+    RETURN_NAMES = ("media_board", "noise")
     FUNCTION = "collect"
     CATEGORY = "H3 / Media"
 
@@ -500,8 +500,11 @@ class H3MediaBoard:
         # UI payload must remain JSON serializable; the executable noise object
         # travels only through the in-memory board output to the unpack node.
         runtime_manifest = dict(manifest)
-        runtime_manifest["_noise_object"] = _H3SeedNoise(effective_seed)
-        return {"ui": {"h3_media_board": [manifest]}, "result": (runtime_manifest,)}
+        noise = _H3SeedNoise(effective_seed)
+        runtime_manifest["_noise_object"] = noise
+        # Keep media_board as output 0 so existing workflows remain connected;
+        # expose the same generator directly for SamplerCustomAdvanced at 1.
+        return {"ui": {"h3_media_board": [manifest]}, "result": (runtime_manifest, noise)}
 
 
 class H3MediaBoardUnpack:
