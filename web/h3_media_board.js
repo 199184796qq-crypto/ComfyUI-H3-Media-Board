@@ -1546,12 +1546,15 @@ function createDynamicMediaBoard(node) {
   root.className = "h3-media-board h3-dynamic-media-board";
   root.tabIndex = 0;
   const refreshOutputs = (state) => {
-    // Remove ComfyUI's fixed backend placeholders.  The server still has a
-    // 128-slot wildcard capacity, but the visible node owns only real media
-    // ports, ordered as all images followed by all audio clips.
+    // Keep one IMAGE and one AUDIO socket available even before anything is
+    // uploaded.  That makes the board usable as a fixed connection point in a
+    // workflow: the empty socket simply produces None until its first card is
+    // populated.  Additional ports still grow with the uploaded media.
+    const imageCount = Math.max(1, state.image.length);
+    const audioCount = Math.max(1, state.audio.length);
     const desired = [
-      ...state.image.map((_, index) => [`图片_${index + 1}`, "IMAGE"]),
-      ...state.audio.map((_, index) => [`音频_${index + 1}`, "AUDIO"]),
+      ...Array.from({ length: imageCount }, (_, index) => [`图片_${index + 1}`, "IMAGE"]),
+      ...Array.from({ length: audioCount }, (_, index) => [`音频_${index + 1}`, "AUDIO"]),
     ];
     const current = node.outputs || [];
     const matches = current.length === desired.length && current.every(
@@ -1699,7 +1702,7 @@ function createDynamicMediaBoard(node) {
     // LiteGraph lays the DOM widget below every visible output port.  Reserve
     // that space too, otherwise images can push the audio section below the
     // node boundary as more media outputs are added.
-    const outputPortHeight = (state.image.length + state.audio.length) * 20;
+    const outputPortHeight = (Math.max(1, state.image.length) + Math.max(1, state.audio.length)) * 20;
     const resizeHeight = node._dynamicResizeCollapsed ? 42 : 140;
     const height = Math.max(220, 54 + outputPortHeight + imageHeight + 30 + audioHeight + resizeHeight);
     const visibleImages = Math.min(DYNAMIC_MEDIA_LIMIT, state.image.length + 1);

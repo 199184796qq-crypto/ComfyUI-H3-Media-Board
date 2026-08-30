@@ -963,11 +963,12 @@ class H3MultiTimeGuide:
 
 
 class DynamicMediaBoard:
-    """A growing image/audio upload board with one output per populated asset.
+    """A growing image/audio upload board with one always-present output per type.
 
     ComfyUI needs output types to be declared ahead of time, so the node owns
-    a generous fixed backend capacity.  The frontend hides all unused ports
-    and reveals each port exactly when its matching card receives an upload.
+    a generous fixed backend capacity.  The frontend keeps ``图片_1`` and
+    ``音频_1`` visible even when empty; remaining ports appear only as their
+    matching cards receive uploads.
     """
 
     @classmethod
@@ -1008,6 +1009,11 @@ class DynamicMediaBoard:
             for item in manifest["image"]
         ]
         audios = [_load_audio(item) for item in manifest["audio"]]
+        # The frontend always exposes the first IMAGE and AUDIO socket.  Keep
+        # their backend positions aligned while empty, rather than allowing an
+        # audio-only board to occupy the first IMAGE output slot.
+        images = images or [None]
+        audios = audios or [None]
         values = images + audios
         values += [None] * (DYNAMIC_MEDIA_LIMIT * 2 - len(values))
         return tuple(values)
