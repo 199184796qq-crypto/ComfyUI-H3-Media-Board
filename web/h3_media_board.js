@@ -2327,7 +2327,7 @@ function createMultiLoraLoader(node) {
   }
   node._multiLoraReady = true;
   node.properties ??= {};
-  node.properties.multi_lora_schema_version = 3;
+  node.properties.multi_lora_schema_version = 4;
 
   for (let index = 1; index <= MULTI_LORA_MAX; index++) {
     const [lora, strength, enabled] = multiLoraRow(node, index);
@@ -2363,22 +2363,34 @@ app.registerExtension({
       // The first version stored one CLIP strength after every LoRA row.
       // The current version uses the CLIP socket directly, with the same
       // strength as its MODEL counterpart. Remove only those obsolete values.
-      if (schemaVersion < 3 && hasLegacyClip
+      if (schemaVersion < 2 && hasLegacyClip
           && node.widgets_values.length >= 1 + MULTI_LORA_MAX * 3) {
         for (let index = MULTI_LORA_MAX; index >= 1; index--) {
           node.widgets_values.splice(1 + (index - 1) * 3 + 2, 1);
         }
       }
-      // Existing workflows have (LoRA, strength) pairs. Insert enabled=true
-      // after each pair so their saved selections and strengths stay aligned.
+      // Version 2 briefly stored each enabled value immediately after its
+      // LoRA/strength pair. Move those values to the end of the schema.
+      if ((schemaVersion === 2 || schemaVersion === 3)
+          && node.widgets_values.length >= 1 + MULTI_LORA_MAX * 3) {
+        const values = node.widgets_values;
+        const head = values.slice(0, 1);
+        const pairs = [];
+        const enabled = [];
+        for (let index = 0; index < MULTI_LORA_MAX; index++) {
+          pairs.push(values[1 + index * 3], values[1 + index * 3 + 1]);
+          enabled.push(values[1 + index * 3 + 2]);
+        }
+        node.widgets_values = [...head, ...pairs, ...enabled];
+      }
+      // Older workflows have only (LoRA, strength) pairs. Append enabled=true
+      // controls without changing any of their existing positions.
       if (node.widgets_values.length >= 1 + MULTI_LORA_MAX * 2
           && node.widgets_values.length < 1 + MULTI_LORA_MAX * 3) {
-        for (let index = MULTI_LORA_MAX; index >= 1; index--) {
-          node.widgets_values.splice(1 + (index - 1) * 2 + 2, 0, true);
-        }
+        node.widgets_values.push(...Array(MULTI_LORA_MAX).fill(true));
       }
       node.properties ??= {};
-      node.properties.multi_lora_schema_version = 3;
+      node.properties.multi_lora_schema_version = 4;
     }
   },
   beforeRegisterNodeDef(nodeType, nodeData) {

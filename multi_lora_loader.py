@@ -41,6 +41,9 @@ class MultiLoRALoader:
                     "tooltip": "LoRA strength applied to the diffusion model.",
                 },
             )
+        # Keep these controls after every existing LoRA/strength field. This
+        # preserves the serialized input order of older workflows.
+        for index in range(1, cls.MAX_LORAS + 1):
             required[f"enabled_{index}"] = (
                 "BOOLEAN",
                 {
