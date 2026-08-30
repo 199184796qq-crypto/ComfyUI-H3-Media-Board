@@ -35,6 +35,53 @@ MAX_SEED = 0x1FFFFFFFFFFFFF  # Exact integer range supported by browser number i
 _LAST_QUEUED_SEEDS: dict[str, int] = {}
 
 
+def _prompt_h3_overrides(prompt: str | None) -> dict[str, float | str]:
+    """Extract an H3 duration and aspect ratio explicitly stated in a prompt.
+
+    This runs at execution time as well as in the browser UI, so a prompt
+    supplied through the forced ``external_prompt`` input cannot leave the
+    board's runtime settings out of sync with the written prompt.
+    """
+    text = str(prompt or "").replace("：", ":")
+    result: dict[str, float | str] = {}
+
+    # Check explicit numeric ratios before descriptive words. Boundaries avoid
+    # mistaking timestamps such as 00:03 for a requested output ratio.
+    for ratio in sorted(ASPECT_RATIOS, key=len, reverse=True):
+        pattern = ratio.replace(":", r"\s*:\s*")
+        if re.search(rf"(?<!\d){pattern}(?!\d)", text):
+            result["aspect_ratio"] = ratio
+            break
+    else:
+        lowered = text.lower()
+        if re.search(r"(?:\bportrait\b|\bvertical\b|竖屏|竖版)", lowered):
+            result["aspect_ratio"] = "9:16"
+        elif re.search(r"(?:\bultra[ -]?wide\b|\bwidescreen\b|超宽屏)", lowered):
+            result["aspect_ratio"] = "21:9"
+        elif re.search(r"(?:\blandscape\b|\bhorizontal\b|横屏|横版)", lowered):
+            result["aspect_ratio"] = "16:9"
+        elif re.search(r"(?:\bsquare\b|方形|正方形)", lowered):
+            result["aspect_ratio"] = "1:1"
+
+    duration_patterns = (
+        r"(?:\bduration\b|\b(?:target\s+)?video(?:\s+(?:duration|length))?\b|\blength\b|时长|视频长度)\s*(?:is|为|:)?\s*(\d+(?:\.\d+)?)",
+        r"(?:^|[^\d:])(\d+(?:\.\d+)?)\s*(?:-|–|—)?\s*(?:seconds?|secs?|秒)\b",
+    )
+    for pattern in duration_patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        seconds = float(match.group(1))
+        # Reference prompts often contain alignment timestamps such as
+        # "0.00 seconds". They are not a requested video duration.
+        if seconds < 4.0:
+            continue
+        # H3 accepts 4–15 seconds in 0.5-second increments.
+        result["duration"] = min(15.0, max(4.0, round(seconds * 2) / 2))
+        break
+    return result
+
+
 def _input_root() -> Path:
     root = Path(folder_paths.get_input_directory()) / UPLOAD_DIRNAME
     root.mkdir(parents=True, exist_ok=True)
@@ -171,6 +218,94 @@ def _resize_dynamic_image(
     else:  # 指定尺寸（拉伸）
         result = scale(target_height, target_width)
     return result.movedim(1, -1).contiguous()
+
+
+PANORAMA_ASPECT_RATIOS = {
+    "1:1": (1, 1), "2:3": (2, 3), "3:2": (3, 2), "3:4": (3, 4),
+    "4:3": (4, 3), "9:16": (9, 16), "16:9": (16, 9), "21:9": (21, 9),
+}
+
+
+def _equirectangular_to_perspective(
+    image: torch.Tensor,
+    yaw: float,
+    pitch: float,
+    horizontal_fov: float,
+    width: int,
+    height: int,
+) -> torch.Tensor:
+    """Render a rectilinear camera view from an equirectangular IMAGE batch."""
+    if image.ndim != 4 or image.shape[-1] not in {1, 3, 4}:
+        raise ValueError("全景图必须是 ComfyUI IMAGE 格式 [批次, 高, 宽, 通道]。")
+    source_height, source_width = int(image.shape[1]), int(image.shape[2])
+    if source_width < 2 or source_height < 2:
+        raise ValueError("全景图尺寸无效。")
+
+    width = max(16, min(8192, int(width)))
+    height = max(16, min(8192, int(height)))
+    yaw = math.radians((float(yaw) + 180.0) % 360.0 - 180.0)
+    pitch = math.radians(max(-89.0, min(89.0, float(pitch))))
+    horizontal_fov = math.radians(max(30.0, min(120.0, float(horizontal_fov))))
+    dtype, device = image.dtype, image.device
+    horizontal_scale = math.tan(horizontal_fov * 0.5)
+    vertical_scale = horizontal_scale / (width / height)
+
+    output_x = (torch.arange(width, device=device, dtype=dtype) + 0.5) / width * 2.0 - 1.0
+    output_y = 1.0 - (torch.arange(height, device=device, dtype=dtype) + 0.5) / height * 2.0
+    plane_y, plane_x = torch.meshgrid(output_y * vertical_scale, output_x * horizontal_scale, indexing="ij")
+    sin_yaw, cos_yaw = math.sin(yaw), math.cos(yaw)
+    sin_pitch, cos_pitch = math.sin(pitch), math.cos(pitch)
+    forward = torch.tensor([cos_pitch * cos_yaw, sin_pitch, cos_pitch * sin_yaw], device=device, dtype=dtype)
+    right = torch.tensor([-sin_yaw, 0.0, cos_yaw], device=device, dtype=dtype)
+    up = torch.tensor([-sin_pitch * cos_yaw, cos_pitch, -sin_pitch * sin_yaw], device=device, dtype=dtype)
+    rays = torch.nn.functional.normalize(
+        forward.view(1, 1, 3) + plane_x.unsqueeze(-1) * right.view(1, 1, 3) + plane_y.unsqueeze(-1) * up.view(1, 1, 3),
+        dim=-1,
+    )
+    longitude = torch.atan2(rays[..., 2], rays[..., 0])
+    latitude = torch.asin(rays[..., 1].clamp(-1.0, 1.0))
+    source_u = torch.remainder(longitude / (2.0 * math.pi) + 0.5, 1.0)
+    source_v = (0.5 - latitude / math.pi).clamp(0.5 / source_height, 1.0 - 0.5 / source_height)
+    source = torch.cat((image.movedim(-1, 1), image.movedim(-1, 1)[..., :1]), dim=-1)
+    grid_x = source_u * (2.0 * source_width / (source_width + 1.0)) - 1.0
+    grid_y = source_v * 2.0 - 1.0
+    grid = torch.stack((grid_x, grid_y), dim=-1).unsqueeze(0).expand(image.shape[0], -1, -1, -1)
+    return torch.nn.functional.grid_sample(
+        source, grid, mode="bilinear", padding_mode="border", align_corners=False,
+    ).movedim(1, -1).contiguous()
+
+
+def _paint_panorama_rectangles(image: torch.Tensor, raw_annotations: str) -> torch.Tensor:
+    """Apply browser-drawn, normalized filled rectangles to the snapshot output."""
+    try:
+        annotations = json.loads(raw_annotations or "[]")
+    except json.JSONDecodeError:
+        return image
+    if not isinstance(annotations, list):
+        return image
+    result = image.clone()
+    height, width, channels = int(result.shape[1]), int(result.shape[2]), int(result.shape[3])
+    for annotation in annotations[:100]:
+        if not isinstance(annotation, dict):
+            continue
+        try:
+            x = float(annotation.get("x", 0.0)); y = float(annotation.get("y", 0.0))
+            end_x = x + float(annotation.get("w", 0.0)); end_y = y + float(annotation.get("h", 0.0))
+        except (TypeError, ValueError):
+            continue
+        color = str(annotation.get("color", "#ff3b30"))
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            continue
+        left = max(0, min(width, round(min(x, end_x) * width)))
+        right = max(0, min(width, round(max(x, end_x) * width)))
+        top = max(0, min(height, round(min(y, end_y) * height)))
+        bottom = max(0, min(height, round(max(y, end_y) * height)))
+        if left >= right or top >= bottom:
+            continue
+        rgb = [int(color[index:index + 2], 16) / 255.0 for index in (1, 3, 5)]
+        fill = torch.tensor(rgb[:min(3, channels)], device=result.device, dtype=result.dtype)
+        result[:, top:bottom, left:right, :fill.numel()] = fill
+    return result
 
 
 async def _upload_media(request: web.Request) -> web.Response:
@@ -350,8 +485,12 @@ class H3MediaBoard:
                 noise_seed: int, noise_mode: str, external_prompt: str | None = None,
                 unique_id: str | None = None, noise_after_generate: str = "randomize"):
         manifest = _clean_manifest(media_manifest)
-        manifest["prompt"] = external_prompt if external_prompt is not None else prompt
-        settings = _h3_settings(duration, aspect_ratio, megapixels, multiple, auto_calculate, manual_frames)
+        effective_prompt = external_prompt if external_prompt is not None else prompt
+        manifest["prompt"] = effective_prompt
+        overrides = _prompt_h3_overrides(effective_prompt)
+        effective_duration = float(overrides.get("duration", duration))
+        effective_aspect_ratio = str(overrides.get("aspect_ratio", aspect_ratio))
+        settings = _h3_settings(effective_duration, effective_aspect_ratio, megapixels, multiple, auto_calculate, manual_frames)
         effective_seed = _effective_noise_seed(noise_seed, noise_mode, unique_id)
         settings["noise"] = {
             "seed": int(noise_seed), "mode": noise_mode, "after_generate": noise_after_generate,
@@ -855,6 +994,60 @@ class DynamicMediaBoard:
         return tuple(values)
 
 
+class PanoramaViewerSnapshot:
+    """Interactive equirectangular panorama viewer with a perspective IMAGE output."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "panorama_path": ("STRING", {"default": "", "multiline": False}),
+                "yaw": ("FLOAT", {"default": 0.0, "min": -180.0, "max": 180.0, "step": 0.1}),
+                "pitch": ("FLOAT", {"default": 0.0, "min": -89.0, "max": 89.0, "step": 0.1}),
+                "horizontal_fov": ("FLOAT", {"default": 90.0, "min": 30.0, "max": 120.0, "step": 1.0}),
+                "aspect_ratio": (list(PANORAMA_ASPECT_RATIOS), {"default": "16:9"}),
+                "output_width": ("INT", {"default": 1024, "min": 256, "max": 8192, "step": 8}),
+                "lock_x": ("BOOLEAN", {"default": False, "label_on": "锁定 X", "label_off": "解锁 X"}),
+                "lock_y": ("BOOLEAN", {"default": False, "label_on": "锁定 Y", "label_off": "解锁 Y"}),
+                "lock_z": ("BOOLEAN", {"default": False, "label_on": "锁定 Z", "label_off": "解锁 Z"}),
+                "annotations": ("STRING", {"default": "[]", "multiline": False}),
+            },
+            "optional": {
+                "image": ("IMAGE", {"tooltip": "可选：从其他节点输入全景图；拖入节点的图片优先由全景图路径使用。"}),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("截图",)
+    FUNCTION = "snapshot"
+    CATEGORY = "H3 / Media"
+
+    def snapshot(
+        self,
+        panorama_path: str,
+        yaw: float,
+        pitch: float,
+        horizontal_fov: float,
+        aspect_ratio: str,
+        output_width: int,
+        lock_x: bool = False,
+        lock_y: bool = False,
+        lock_z: bool = False,
+        annotations: str = "[]",
+        image: torch.Tensor | None = None,
+    ):
+        if image is None:
+            if not panorama_path:
+                raise ValueError("请拖入一张 2:1 等距柱状全景图，或连接 image 输入。")
+            image = _load_image({"path": panorama_path, "name": Path(panorama_path).name})
+        ratio_width, ratio_height = PANORAMA_ASPECT_RATIOS.get(aspect_ratio, PANORAMA_ASPECT_RATIOS["16:9"])
+        max_width = min(8192, math.floor(8192 * ratio_width / ratio_height))
+        width = max(256, min(max_width, int(output_width)))
+        height = max(16, round(width * ratio_height / ratio_width))
+        snapshot = _equirectangular_to_perspective(image, yaw, pitch, horizontal_fov, width, height)
+        return (_paint_panorama_rectangles(snapshot, annotations),)
+
+
 NODE_CLASS_MAPPINGS = {
     "H3MediaBoard": H3MediaBoard,
     "H3MediaBoardUnpack": H3MediaBoardUnpack,
@@ -863,6 +1056,7 @@ NODE_CLASS_MAPPINGS = {
     "H3SecondPassPreparation": H3SecondPassPreparation,
     "H3MultiTimeGuide": H3MultiTimeGuide,
     "DynamicMediaBoard": DynamicMediaBoard,
+    "PanoramaViewerSnapshot": PanoramaViewerSnapshot,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -873,4 +1067,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3SecondPassPreparation": "H3 二采准备（高分条件 / 注入帧）",
     "H3MultiTimeGuide": "H3 多时间点引导帧",
     "DynamicMediaBoard": "动态素材板（图片 / 音频）",
+    "PanoramaViewerSnapshot": "360° 全景查看与截图",
 }

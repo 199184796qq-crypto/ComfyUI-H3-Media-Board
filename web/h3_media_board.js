@@ -25,6 +25,38 @@ function h3Settings(duration, aspectRatio, megapixels, multiple, autoCalculate =
   return { duration: seconds, aspectRatio, megapixels: mp, multiple: align, autoCalculate: automatic, manualFrames: Math.max(1, Math.round(Number(manualFrames) || 1)), width, height, frames: automatic ? calculatedFrames : Math.max(1, Math.round(Number(manualFrames) || 1)) };
 }
 
+function promptH3Overrides(prompt) {
+  const text = String(prompt || "").replaceAll("：", ":");
+  const result = {};
+  for (const ratio of Object.keys(H3_RATIOS).sort((a, b) => b.length - a.length)) {
+    const pattern = ratio.replace(":", "\\s*:\\s*");
+    if (new RegExp(`(^|[^0-9])${pattern}(?=$|[^0-9])`).test(text)) {
+      result.aspect_ratio = ratio;
+      break;
+    }
+  }
+  if (!result.aspect_ratio) {
+    if (/(?:\bportrait\b|\bvertical\b|竖屏|竖版)/i.test(text)) result.aspect_ratio = "9:16";
+    else if (/(?:\bultra[ -]?wide\b|\bwidescreen\b|超宽屏)/i.test(text)) result.aspect_ratio = "21:9";
+    else if (/(?:\blandscape\b|\bhorizontal\b|横屏|横版)/i.test(text)) result.aspect_ratio = "16:9";
+    else if (/(?:\bsquare\b|方形|正方形)/i.test(text)) result.aspect_ratio = "1:1";
+  }
+  const durationPatterns = [
+    /(?:\bduration\b|\b(?:target\s+)?video(?:\s+(?:duration|length))?\b|\blength\b|时长|视频长度)\s*(?:is|为|:)?\s*(\d+(?:\.\d+)?)/i,
+    /(?:^|[^\d:])(\d+(?:\.\d+)?)\s*(?:-|–|—)?\s*(?:seconds?|secs?|秒)/i,
+  ];
+  for (const pattern of durationPatterns) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const seconds = Number(match[1]);
+    // Ignore reference alignment markers such as "0.00 seconds".
+    if (seconds < 4) continue;
+    result.duration = Math.min(15, Math.round(seconds * 2) / 2);
+    break;
+  }
+  return result;
+}
+
 function viewUrl(path) {
   // ComfyUI deliberately strips folders from `filename` for security.  A board
   // asset is stored below input/h3_media_board, therefore its folder must be
@@ -526,6 +558,7 @@ function makeH3SettingsPanel(widgets, node) {
     const field = document.createElement("div"); field.className = `mb-setting mb-setting-${type}`;
     const caption = document.createElement("label"); caption.textContent = label;
     const input = type === "select" ? document.createElement("select") : document.createElement("input");
+    input.dataset.h3Setting = name;
     const widget = widgets[name];
     if (type === "select") {
       Object.keys(H3_RATIOS).forEach((value) => {
@@ -567,6 +600,15 @@ function makeH3SettingsPanel(widgets, node) {
   summary.textContent = summaryText();
   panel.appendChild(summary);
   syncFrameMode();
+  node._h3RefreshSettingsPanel = () => {
+    panel.querySelectorAll("[data-h3-setting]").forEach((input) => {
+      const widget = widgets[input.dataset.h3Setting];
+      if (!widget) return;
+      if (input.type === "checkbox") input.checked = Boolean(widget.value);
+      else input.value = String(widget.value ?? "");
+    });
+    syncFrameMode();
+  };
   return panel;
 }
 
@@ -628,7 +670,7 @@ function makeNoisePanel(widgets, node) {
 // A textarea cannot colour individual references.  This small contenteditable
 // editor keeps the workflow value as ordinary plain text while giving existing
 // media tags a visual treatment and an @ picker.
-function makePromptEditor(promptWidget, node, getState, saveBackup) {
+function makePromptEditor(promptWidget, node, getState, saveBackup, onPromptChanged = null) {
   const shell = document.createElement("div");
   shell.className = "mb-prompt-shell";
   const editor = document.createElement("div");
@@ -875,6 +917,7 @@ function makePromptEditor(promptWidget, node, getState, saveBackup) {
     const value = currentText();
     promptWidget.value = value;
     promptWidget.callback?.(value);
+    onPromptChanged?.(value);
     saveBackup(); node.graph?.setDirtyCanvas(true, true);
   };
   const pick = (item) => {
@@ -1007,7 +1050,20 @@ function createBoard(node) {
     saveVersions(versions);
     try { sessionStorage.setItem(sessionKey, JSON.stringify(backup)); } catch (_) { /* storage can be unavailable */ }
   };
-  const prompt = makePromptEditor(promptWidget, node, () => readManifest(manifestWidget), saveBackup);
+  const applyPromptOverrides = (value) => {
+    const overrides = promptH3Overrides(value);
+    if (!Object.keys(overrides).length) return;
+    for (const [name, setting] of Object.entries(overrides)) {
+      const widget = settingsWidgets[name];
+      if (!widget || widget.value === setting) continue;
+      widget.value = setting;
+      widget.callback?.(setting);
+    }
+    node._h3RefreshSettingsPanel?.();
+    node.graph?.setDirtyCanvas?.(true, true);
+  };
+  const prompt = makePromptEditor(promptWidget, node, () => readManifest(manifestWidget), saveBackup, applyPromptOverrides);
+  applyPromptOverrides(String(promptWidget.value || ""));
   root.onpointerdown = (event) => { if (!prompt.contains(event.target)) root.focus({ preventScroll: true }); };
   // DOM widgets sit above LiteGraph's canvas, so their children normally eat
   // the wheel event.  Relay it to the real canvas and keep zoom behaviour the
