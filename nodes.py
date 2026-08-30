@@ -395,11 +395,13 @@ def _load_video_frames(item: dict[str, str] | None) -> torch.Tensor | None:
 
 
 def _h3_settings(duration: float, aspect_ratio: str, megapixels: float, multiple: int,
-                 auto_calculate: bool = True, manual_frames: int = 362) -> dict[str, int | float | str | bool]:
+                 second_pass_scale: float = 1.0, auto_calculate: bool = True,
+                 manual_frames: int = 362) -> dict[str, int | float | str | bool]:
     """Match H3 Resolution Selector: MP × 1024² → ratio → nearest multiple."""
     duration = min(15.0, max(4.0, float(duration)))
-    megapixels = min(16.0, max(0.1, float(megapixels)))
+    megapixels = round(min(16.0, max(0.1, float(megapixels))), 1)
     multiple = min(128, max(8, int(multiple)))
+    second_pass_scale = round(min(4.0, max(1.0, float(second_pass_scale))), 1)
     width_ratio, height_ratio = ASPECT_RATIOS.get(aspect_ratio, ASPECT_RATIOS["9:16"])
     scale = math.sqrt(megapixels * 1024 * 1024 / (width_ratio * height_ratio))
     width = round(width_ratio * scale / multiple) * multiple
@@ -410,6 +412,7 @@ def _h3_settings(duration: float, aspect_ratio: str, megapixels: float, multiple
     return {
         "duration": duration, "aspect_ratio": aspect_ratio, "megapixels": megapixels,
         "multiple": multiple, "auto_calculate": bool(auto_calculate), "manual_frames": max(1, int(manual_frames)),
+        "second_pass_scale": second_pass_scale,
         "width": width, "height": height, "frames": frames,
     }
 
@@ -457,6 +460,7 @@ class H3MediaBoard:
                 "aspect_ratio": (list(ASPECT_RATIOS.keys()), {"default": "9:16"}),
                 "megapixels": ("FLOAT", {"default": 0.4, "min": 0.1, "max": 16.0, "step": 0.1}),
                 "multiple": ("INT", {"default": 32, "min": 8, "max": 128, "step": 4}),
+                "second_pass_scale": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 4.0, "step": 0.1}),
                 "auto_calculate": ("BOOLEAN", {"default": True, "label_on": "自动计算帧数", "label_off": "手动帧数"}),
                 "manual_frames": ("INT", {"default": 362, "min": 1, "max": 10000, "step": 1}),
                 "noise_seed": ("INT", {"default": 0, "min": 0, "max": MAX_SEED}),
@@ -470,8 +474,8 @@ class H3MediaBoard:
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
-    RETURN_TYPES = ("H3_MEDIA_BOARD", "NOISE")
-    RETURN_NAMES = ("media_board", "noise")
+    RETURN_TYPES = ("H3_MEDIA_BOARD", "NOISE", "FLOAT")
+    RETURN_NAMES = ("media_board", "noise", "2采放大倍数")
     FUNCTION = "collect"
     CATEGORY = "H3 / Media"
 
@@ -481,7 +485,7 @@ class H3MediaBoard:
         return float("nan") if noise_mode == "random_each_queue" else noise_mode
 
     def collect(self, prompt: str, media_manifest: str, duration: float, aspect_ratio: str,
-                megapixels: float, multiple: int, auto_calculate: bool, manual_frames: int,
+                megapixels: float, multiple: int, second_pass_scale: float, auto_calculate: bool, manual_frames: int,
                 noise_seed: int, noise_mode: str, external_prompt: str | None = None,
                 unique_id: str | None = None, noise_after_generate: str = "randomize"):
         manifest = _clean_manifest(media_manifest)
@@ -490,7 +494,10 @@ class H3MediaBoard:
         overrides = _prompt_h3_overrides(effective_prompt)
         effective_duration = float(overrides.get("duration", duration))
         effective_aspect_ratio = str(overrides.get("aspect_ratio", aspect_ratio))
-        settings = _h3_settings(effective_duration, effective_aspect_ratio, megapixels, multiple, auto_calculate, manual_frames)
+        settings = _h3_settings(
+            effective_duration, effective_aspect_ratio, megapixels, multiple,
+            second_pass_scale, auto_calculate, manual_frames,
+        )
         effective_seed = _effective_noise_seed(noise_seed, noise_mode, unique_id)
         settings["noise"] = {
             "seed": int(noise_seed), "mode": noise_mode, "after_generate": noise_after_generate,
@@ -502,9 +509,12 @@ class H3MediaBoard:
         runtime_manifest = dict(manifest)
         noise = _H3SeedNoise(effective_seed)
         runtime_manifest["_noise_object"] = noise
-        # Keep media_board as output 0 so existing workflows remain connected;
-        # expose the same generator directly for SamplerCustomAdvanced at 1.
-        return {"ui": {"h3_media_board": [manifest]}, "result": (runtime_manifest, noise)}
+        # Keep the existing outputs at indexes 0 and 1 so saved workflows stay
+        # connected; append the second-pass scale as a direct FLOAT output.
+        return {
+            "ui": {"h3_media_board": [manifest]},
+            "result": (runtime_manifest, noise, float(settings["second_pass_scale"])),
+        }
 
 
 class H3MediaBoardUnpack:
@@ -522,14 +532,14 @@ class H3MediaBoardUnpack:
     # H3's ref_videos ports take IMAGE frame batches, not ComfyUI VIDEO objects.
     RETURN_TYPES = tuple(
         ["IMAGE"] * 9 + ["IMAGE"] * 3 + ["AUDIO"] * 3 + ["AUDIO"] * 3
-        + ["STRING", "FLOAT", "INT", "INT", "INT", "NOISE"]
+        + ["STRING", "FLOAT", "INT", "INT", "INT", "NOISE", "FLOAT"]
     )
     RETURN_NAMES = tuple(
         [f"image_{index}" for index in range(1, 10)]
         + [f"video_{index}" for index in range(1, 4)]
         + [f"video_audio_{index}" for index in range(1, 4)]
         + [f"audio_{index}" for index in range(1, 4)]
-        + ["prompt", "duration", "width", "height", "frames", "noise"]
+        + ["prompt", "duration", "width", "height", "frames", "noise", "2采放大倍数"]
     )
     FUNCTION = "unpack"
     CATEGORY = "H3 / Media"
@@ -551,7 +561,8 @@ class H3MediaBoardUnpack:
         params = _h3_settings(
             settings.get("duration", 15.0), settings.get("aspect_ratio", "9:16"),
             settings.get("megapixels", 0.4), settings.get("multiple", 32),
-            settings.get("auto_calculate", True), settings.get("manual_frames", 362),
+            settings.get("second_pass_scale", 1.0), settings.get("auto_calculate", True),
+            settings.get("manual_frames", 362),
         )
         noise_settings = settings.get("noise", {}) if isinstance(settings, dict) else {}
         noise = media_board.get("_noise_object") if isinstance(media_board, dict) else None
@@ -559,6 +570,7 @@ class H3MediaBoardUnpack:
             noise = _H3SeedNoise(int(noise_settings.get("effective_seed", noise_settings.get("seed", 0))))
         return tuple(images + videos + video_audios + audios + [
             str(media_board.get("prompt", "")), params["duration"], params["width"], params["height"], params["frames"], noise,
+            float(params["second_pass_scale"]),
         ])
 
 

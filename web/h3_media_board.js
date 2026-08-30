@@ -11,10 +11,11 @@ const H3_RATIOS = {
   "4:3": [4, 3], "9:16": [9, 16], "16:9": [16, 9], "21:9": [21, 9],
 };
 
-function h3Settings(duration, aspectRatio, megapixels, multiple, autoCalculate = true, manualFrames = 362) {
+function h3Settings(duration, aspectRatio, megapixels, multiple, secondPassScale = 1, autoCalculate = true, manualFrames = 362) {
   const seconds = Math.min(15, Math.max(4, Number(duration) || 15));
-  const mp = Math.min(16, Math.max(0.1, Number(megapixels) || 0.4));
+  const mp = Number(Math.min(16, Math.max(0.1, Number(megapixels) || 0.4)).toFixed(1));
   const align = Math.min(128, Math.max(8, Math.round(Number(multiple) || 32)));
+  const scaleFactor = Number(Math.min(4, Math.max(1, Number(secondPassScale) || 1)).toFixed(1));
   const [ratioWidth, ratioHeight] = H3_RATIOS[aspectRatio] || H3_RATIOS["9:16"];
   const scale = Math.sqrt(mp * 1024 * 1024 / (ratioWidth * ratioHeight));
   const width = Math.round(ratioWidth * scale / align) * align;
@@ -22,7 +23,7 @@ function h3Settings(duration, aspectRatio, megapixels, multiple, autoCalculate =
   const baseFrames = Math.max(5, Math.round(seconds * 24));
   const calculatedFrames = baseFrames + (5 - baseFrames % 17) % 17;
   const automatic = Boolean(autoCalculate);
-  return { duration: seconds, aspectRatio, megapixels: mp, multiple: align, autoCalculate: automatic, manualFrames: Math.max(1, Math.round(Number(manualFrames) || 1)), width, height, frames: automatic ? calculatedFrames : Math.max(1, Math.round(Number(manualFrames) || 1)) };
+  return { duration: seconds, aspectRatio, megapixels: mp, multiple: align, secondPassScale: scaleFactor, autoCalculate: automatic, manualFrames: Math.max(1, Math.round(Number(manualFrames) || 1)), width, height, frames: automatic ? calculatedFrames : Math.max(1, Math.round(Number(manualFrames) || 1)) };
 }
 
 function promptH3Overrides(prompt) {
@@ -551,7 +552,7 @@ function makeH3SettingsPanel(widgets, node) {
   const caption = document.createElement("span"); caption.className = "mb-settings-caption"; caption.textContent = "时长 · 画幅 · 尺寸 · 帧数";
   header.append(title, caption); panel.appendChild(header);
   const summaryText = () => {
-    const settings = h3Settings(widgets.duration.value, widgets.aspect_ratio.value, widgets.megapixels.value, widgets.multiple.value, widgets.auto_calculate.value, widgets.manual_frames.value);
+    const settings = h3Settings(widgets.duration.value, widgets.aspect_ratio.value, widgets.megapixels.value, widgets.multiple.value, widgets.second_pass_scale.value, widgets.auto_calculate.value, widgets.manual_frames.value);
     return `H3 输出：${settings.width} × ${settings.height} · ${settings.frames} 帧 · ${settings.autoCalculate ? "自动对齐 · " : "手动设置 · "}24 fps`;
   };
   const createControl = (name, label, type, options = {}) => {
@@ -571,10 +572,17 @@ function makeH3SettingsPanel(widgets, node) {
     } else {
       input.type = "number";
       Object.entries(options).forEach(([key, value]) => input.setAttribute(key, String(value)));
-      input.value = String(widget.value ?? options.value ?? "");
+      const rawValue = Number(widget.value ?? options.value ?? 0);
+      input.value = Number.isInteger(options.decimals) && Number.isFinite(rawValue)
+        ? rawValue.toFixed(options.decimals)
+        : String(widget.value ?? options.value ?? "");
     }
     input.onchange = () => {
-      const value = type === "select" ? input.value : type === "checkbox" ? input.checked : Number(input.value);
+      let value = type === "select" ? input.value : type === "checkbox" ? input.checked : Number(input.value);
+      if (type === "number" && Number.isInteger(options.decimals) && Number.isFinite(value)) {
+        value = Number(value.toFixed(options.decimals));
+        input.value = value.toFixed(options.decimals);
+      }
       widget.value = value;
       widget.callback?.(value);
       node._h3SaveBackup?.();
@@ -586,10 +594,11 @@ function makeH3SettingsPanel(widgets, node) {
   };
   createControl("duration", "时长", "number", { min: 4, max: 15, step: 0.5 });
   createControl("aspect_ratio", "宽高比", "select");
-  createControl("megapixels", "百万像素", "number", { min: 0.1, max: 16, step: 0.1 });
+  createControl("megapixels", "1采百万像素", "number", { min: 0.1, max: 16, step: 0.1, decimals: 1 });
   createControl("multiple", "倍数", "number", { min: 8, max: 128, step: 4 });
   const autoInput = createControl("auto_calculate", "自动计算帧数", "checkbox");
   const manualInput = createControl("manual_frames", "手动帧数", "number", { min: 1, max: 10000, step: 1 });
+  createControl("second_pass_scale", "2采放大倍数", "number", { min: 1, max: 4, step: 0.1, decimals: 1 });
   const syncFrameMode = () => {
     manualInput.disabled = Boolean(widgets.auto_calculate.value);
     panel.querySelector(".mb-output-summary").textContent = summaryText();
@@ -605,7 +614,11 @@ function makeH3SettingsPanel(widgets, node) {
       const widget = widgets[input.dataset.h3Setting];
       if (!widget) return;
       if (input.type === "checkbox") input.checked = Boolean(widget.value);
-      else input.value = String(widget.value ?? "");
+      else {
+        const decimals = input.getAttribute("step") === "0.1" ? 1 : null;
+        const value = Number(widget.value ?? "");
+        input.value = decimals !== null && Number.isFinite(value) ? value.toFixed(decimals) : String(widget.value ?? "");
+      }
     });
     syncFrameMode();
   };
@@ -977,9 +990,15 @@ function makePromptEditor(promptWidget, node, getState, saveBackup, onPromptChan
 function createBoard(node) {
   if (node._h3BoardCreated) return;
   injectStyle();
+  // Workflows saved before the second-pass scale existed have only the first
+  // two ports. Append the new FLOAT port without changing either old index.
+  if (!node.outputs?.some((output) => output.name === "2采放大倍数")) {
+    node.addOutput?.("2采放大倍数", "FLOAT");
+    node.graph?.setDirtyCanvas?.(true, true);
+  }
   const manifestWidget = node.widgets?.find((widget) => widget.name === "media_manifest");
   const promptWidget = node.widgets?.find((widget) => widget.name === "prompt");
-  const settingsWidgets = Object.fromEntries(["duration", "aspect_ratio", "megapixels", "multiple", "auto_calculate", "manual_frames", "noise_seed", "noise_mode", "noise_after_generate"].map((name) => [name, node.widgets?.find((widget) => widget.name === name)]));
+  const settingsWidgets = Object.fromEntries(["duration", "aspect_ratio", "megapixels", "multiple", "second_pass_scale", "auto_calculate", "manual_frames", "noise_seed", "noise_mode", "noise_after_generate"].map((name) => [name, node.widgets?.find((widget) => widget.name === name)]));
   const retryWhenWidgetsReady = () => {
     const attempts = node._h3BoardInitAttempts || 0;
     if (attempts >= 8 || node._h3BoardInitScheduled) return;
@@ -1244,6 +1263,13 @@ function createBoard(node) {
       select.value = node._h3VersionSelection || "current";
       select.onchange = () => {
         node._h3VersionSelection = select.value;
+        load.disabled = !select.value;
+        remove.disabled = select.value === "current";
+      };
+      const load = document.createElement("button"); load.type = "button"; load.textContent = "加载版本";
+      load.disabled = !select.value;
+      load.onclick = (event) => {
+        stop(event);
         const selected = select.value === "current" ? versions.current : versions.entries.find((entry) => entry.id === select.value);
         applyVersion(selected);
       };
@@ -1262,7 +1288,7 @@ function createBoard(node) {
         versions.entries = versions.entries.filter((entry) => entry.id !== selected);
         node._h3VersionSelection = "current"; saveVersions(versions); render();
       };
-      body.append(select, add, remove); panel.appendChild(body);
+      body.append(select, load, add, remove); panel.appendChild(body);
     }
     root.appendChild(panel);
   };
@@ -1694,7 +1720,8 @@ function decorateUnpacker(node) {
     node._h3Settings = h3Settings(
       valueOf("duration", 15), valueOf("aspect_ratio", "9:16"),
       valueOf("megapixels", 0.4), valueOf("multiple", 32),
-      valueOf("auto_calculate", true), valueOf("manual_frames", 362),
+      valueOf("second_pass_scale", 1), valueOf("auto_calculate", true),
+      valueOf("manual_frames", 362),
     );
     node._h3MediaCounts = {
       image: state.image.filter(Boolean).length,
