@@ -2128,7 +2128,8 @@ function decorateVideoModeControl(node) {
     if (node.properties?.h3_mode_manual_override) { node._h3AutoMode = null; return; }
     const media = readManifest(manifestWidget);
     const imageCount = media.image.filter(Boolean).length, audioCount = media.audio.length, videoCount = media.video.length;
-    const useMultiReference = imageCount > 3 || audioCount > 0 || videoCount > 0;
+    // H3 图文/图生只保留给 1–2 张纯图片；第三张图片起改用多参参考。
+    const useMultiReference = imageCount >= 3 || audioCount > 0 || videoCount > 0;
     const reason = useMultiReference
       ? `检测到图片 ${imageCount} 张、音频 ${audioCount} 个、视频 ${videoCount} 个`
       : `检测到图片 ${imageCount} 张，暂无音频或视频`;
