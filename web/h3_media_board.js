@@ -230,7 +230,7 @@ function injectStyle() {
   style.textContent = `
     /* Media, H3 settings, Noise and the prompt must all remain inside the node.
        Extra vertical room is intentionally assigned to the prompt textarea. */
-    .h3-media-board { display:flex; flex-direction:column; box-sizing:border-box; width:100%; height:100%; min-width:900px; max-width:900px; min-height:1350px; color:#ddd; font:12px system-ui, sans-serif; user-select:none; }
+    .h3-media-board { display:flex; flex-direction:column; box-sizing:border-box; width:100%; height:100%; min-width:900px; max-width:900px; min-height:1374px; color:#ddd; font:12px system-ui, sans-serif; user-select:none; }
     .h3-dynamic-media-board { min-width:0; min-height:0; width:auto; height:auto; padding-bottom:8px; }
     .h3-dynamic-media-board .mb-dynamic-grid { display:flex; flex-wrap:wrap; gap:7px; }
     .h3-dynamic-media-board .mb-dynamic-grid .mb-card { width:145px; flex:0 0 145px; }
@@ -343,6 +343,11 @@ function injectStyle() {
     .h3-media-board .mb-prompt-editor { box-sizing:border-box; width:100%; flex:1 1 0; min-height:145px; padding:8px; overflow:auto; color:#ececec; background:#15181b; border:1px solid #586168; border-radius:6px; outline:none; white-space:pre-wrap; overflow-wrap:anywhere; user-select:text; font:12px ui-monospace, Consolas, monospace; }
     .h3-media-board .mb-prompt-editor:focus { border-color:#78d7e3; box-shadow:0 0 0 2px #78d7e322; }
     .h3-media-board .mb-prompt-editor:empty::before { content:attr(data-placeholder); color:#707981; pointer-events:none; }
+    .h3-media-board .mb-height-resize-handle { flex:0 0 18px; display:flex; align-items:center; justify-content:center; margin:5px 0 0; border-top:1px solid #47555c; cursor:ns-resize; touch-action:none; user-select:none; }
+    .h3-media-board .mb-height-resize-handle:hover, .h3-media-board .mb-height-resize-handle.dragging { border-top-color:#6de2ed; background:#1b303733; }
+    .h3-media-board .mb-height-resize-grip { display:flex; flex-direction:column; gap:2px; width:66px; padding:4px 0; }
+    .h3-media-board .mb-height-resize-grip i { display:block; width:100%; height:2px; border-radius:99px; background:#77848a; }
+    .h3-media-board .mb-height-resize-handle:hover .mb-height-resize-grip i, .h3-media-board .mb-height-resize-handle.dragging .mb-height-resize-grip i { background:#a5eff5; }
     .h3-media-board .mb-media-ref { color:#ff626b; font-weight:800; text-shadow:0 0 8px #ff4e5a55; cursor:help; }
     .h3-media-board .mb-dialogue { color:#ffd45d; font-weight:700; text-shadow:0 0 8px #ffcc4550; }
     .h3-media-board .mb-at-symbol { color:#67ee80; font-weight:900; text-shadow:0 0 8px #57e97966; }
@@ -1223,6 +1228,8 @@ function createBoard(node) {
   repairLegacySettings();
 
   const root = document.createElement("div"); root.className = "h3-media-board"; root.tabIndex = 0;
+  const minSize = [930, 1424];
+  const fixedWidth = minSize[0];
   const cloneSnapshot = (value) => JSON.parse(JSON.stringify(value));
   const snapshot = () => ({
     media_manifest: manifestWidget.value || "{}",
@@ -1558,6 +1565,7 @@ function createBoard(node) {
     root.appendChild(makeNoisePanel(settingsWidgets, node));
     prompt.refreshReferences?.();
     root.appendChild(prompt);
+    root.appendChild(makeHeightResizeHandle());
   };
   node._h3RenderBoard = render;
   node._h3SetPromptText = (value) => prompt.setText?.(value);
@@ -1567,8 +1575,43 @@ function createBoard(node) {
   // Keep the canvas frame and the full DOM board in sync.  The toolbar above
   // the prompt needs additional vertical room beyond the former 1220px DOM
   // minimum, otherwise the lowest editor area can protrude past the frame.
-  const minSize = [930, 1400];
-  const fixedWidth = minSize[0];
+  function makeHeightResizeHandle() {
+    const handle = document.createElement("div");
+    handle.className = "mb-height-resize-handle";
+    handle.title = "拖拽调整节点高度";
+    handle.setAttribute("role", "separator");
+    handle.setAttribute("aria-label", "拖拽调整节点高度");
+    const grip = document.createElement("span");
+    grip.className = "mb-height-resize-grip";
+    grip.append(document.createElement("i"), document.createElement("i"), document.createElement("i"));
+    handle.appendChild(grip);
+
+    let drag = null;
+    const finishDrag = (event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      handle.releasePointerCapture?.(drag.pointerId);
+      handle.classList.remove("dragging");
+      drag = null;
+    };
+    handle.onpointerdown = (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault(); event.stopPropagation();
+      const zoom = Math.max(0.1, Number(node.graph?.canvas?.ds?.scale || app.canvas?.ds?.scale || 1));
+      drag = { pointerId: event.pointerId, startY: event.clientY, startHeight: Number(node.size?.[1]) || minSize[1], zoom };
+      handle.setPointerCapture?.(event.pointerId);
+      handle.classList.add("dragging");
+    };
+    handle.onpointermove = (event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      event.preventDefault(); event.stopPropagation();
+      const height = Math.max(minSize[1], Math.round(drag.startHeight + (event.clientY - drag.startY) / drag.zoom));
+      node.setSize?.([fixedWidth, height]);
+      node.graph?.setDirtyCanvas?.(true, true);
+    };
+    handle.onpointerup = finishDrag;
+    handle.onpointercancel = finishDrag;
+    return handle;
+  }
   node.min_width = fixedWidth;
   node.min_height = minSize[1];
   node.max_width = fixedWidth;
@@ -1585,8 +1628,8 @@ function createBoard(node) {
   };
   const domWidget = node.addDOMWidget("media_board_ui", "H3_MEDIA_BOARD_UI", root, {
     getValue: () => "media-board",
-    getMinHeight: () => 1350,
-    getHeight: () => Math.max(1350, node.size[1] - 48),
+    getMinHeight: () => 1374,
+    getHeight: () => Math.max(1374, node.size[1] - 48),
     afterResize: () => { prompt.querySelector(".mb-prompt-editor").style.minHeight = "145px"; },
   });
   node.size = [Math.max(minSize[0], node.size[0]), Math.max(minSize[1], node.size[1])];
