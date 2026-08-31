@@ -1073,6 +1073,38 @@ class PanoramaViewerSnapshot:
         return (_paint_panorama_rectangles(snapshot, annotations),)
 
 
+class H3UniversalLineSwitch:
+    """Pass through any ComfyUI value, or replace it with an absent value."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "enabled": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "label_on": "通行",
+                        "label_off": "断开",
+                        "tooltip": "通行时原样转发输入；断开时向下游输出空值。",
+                    },
+                ),
+            },
+            "optional": {
+                "value": ("*", {"label": "输入（任意类型）"}),
+            },
+        }
+
+    RETURN_TYPES = ("*",)
+    RETURN_NAMES = ("输出（任意类型）",)
+    FUNCTION = "gate"
+    CATEGORY = "H3 / 工具"
+    DESCRIPTION = "任意类型的线路开关：通行时透传，断开时输出空值。"
+
+    def gate(self, enabled: bool, value: Any = None):
+        return (value if enabled else None,)
+
+
 NODE_CLASS_MAPPINGS = {
     "H3MediaBoard": H3MediaBoard,
     "H3MediaBoardUnpack": H3MediaBoardUnpack,
@@ -1082,6 +1114,7 @@ NODE_CLASS_MAPPINGS = {
     "H3MultiTimeGuide": H3MultiTimeGuide,
     "DynamicMediaBoard": DynamicMediaBoard,
     "PanoramaViewerSnapshot": PanoramaViewerSnapshot,
+    "H3UniversalLineSwitch": H3UniversalLineSwitch,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -1093,4 +1126,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3MultiTimeGuide": "H3 多时间点引导帧",
     "DynamicMediaBoard": "动态素材板（图片 / 音频）",
     "PanoramaViewerSnapshot": "360° 全景查看与截图",
+    "H3UniversalLineSwitch": "通用线路开关（任意类型）",
 }

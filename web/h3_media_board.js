@@ -5,11 +5,105 @@ const DYNAMIC_MEDIA_LIMIT = 64;
 const DYNAMIC_MEDIA_COLUMNS = 3;
 const LABELS = { image: "参考图片", audio: "参考音频", video: "参考视频" };
 const ACCEPTS = { image: "image/*", audio: "audio/*", video: "video/*" };
+const TOP_ACTIONS_SETTING = "H3MediaBoard.Toolbar.ShowTopActions";
+const TOP_ACTIONS_HIDDEN_CLASS = "h3-media-board-top-actions-hidden";
+const TOP_ACTION_BUTTON_CLASS = "h3-media-board-top-action";
+const RESTART_RECONNECT_SETTING = "H3MediaBoard.Interface.AutoReloadAfterRestart";
 let draggedMediaCard = null;
+let restartReconnectTimer = null;
 const H3_RATIOS = {
   "1:1": [1, 1], "2:3": [2, 3], "3:2": [3, 2], "3:4": [3, 4],
   "4:3": [4, 3], "9:16": [9, 16], "16:9": [16, 9], "21:9": [21, 9],
 };
+
+function tagTopToolbarActions() {
+  const buttons = [...document.querySelectorAll("button")];
+  const isTopBarButton = (button) => button.getBoundingClientRect().top < 160;
+  const isTarget = (button) => {
+    if (!isTopBarButton(button)) return false;
+    const text = [button.textContent, button.title, button.getAttribute("aria-label"), button.innerHTML]
+      .filter(Boolean)
+      .join(" ");
+    return /show image feed|显示图片源|comfy--comfy-c|bookmark|书签/i.test(text);
+  };
+  buttons.filter(isTarget).forEach((button) => button.classList.add(TOP_ACTION_BUTTON_CLASS));
+}
+
+function applyTopToolbarActionsVisibility(value) {
+  document.body.classList.toggle(TOP_ACTIONS_HIDDEN_CLASS, !value);
+  tagTopToolbarActions();
+}
+
+function setupTopToolbarActionsVisibility() {
+  if (!document.getElementById("h3-media-board-top-actions-style")) {
+    const style = document.createElement("style");
+    style.id = "h3-media-board-top-actions-style";
+    style.textContent = `
+      body.${TOP_ACTIONS_HIDDEN_CLASS} button.${TOP_ACTION_BUTTON_CLASS} {
+        display: none !important;
+      }
+    `;
+    document.head.append(style);
+  }
+  new MutationObserver(tagTopToolbarActions).observe(document.body, { childList: true, subtree: true });
+  app.ui.settings.addSetting({
+    id: TOP_ACTIONS_SETTING,
+    category: ["界面", "工具栏"],
+    name: "显示顶部菜单、书签和图片源按钮",
+    tooltip: "隐藏左上角菜单、书签和 Show Image Feed 按钮；按 Ctrl+Alt+H 可随时恢复。",
+    type: "boolean",
+    defaultValue: false,
+    onChange: applyTopToolbarActionsVisibility,
+  });
+  applyTopToolbarActionsVisibility(app.ui.settings.getSettingValue(TOP_ACTIONS_SETTING, false));
+  window.addEventListener("keydown", (event) => {
+    if (!event.ctrlKey || !event.altKey || event.key.toLowerCase() !== "h") return;
+    event.preventDefault();
+    const next = !app.ui.settings.getSettingValue(TOP_ACTIONS_SETTING, false);
+    app.ui.settings.setSettingValue?.(TOP_ACTIONS_SETTING, next);
+    applyTopToolbarActionsVisibility(next);
+  });
+}
+
+function setupRestartReconnect() {
+  let serverWasUnavailable = false;
+  const stop = () => {
+    if (restartReconnectTimer) window.clearInterval(restartReconnectTimer);
+    restartReconnectTimer = null;
+  };
+  const checkServer = async () => {
+    try {
+      const response = await fetch("/system_stats", { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (serverWasUnavailable) {
+        // The server is back. Reload this same tab so newly installed custom
+        // nodes and frontend extensions are registered again as well.
+        window.location.reload();
+        return;
+      }
+      serverWasUnavailable = false;
+    } catch {
+      serverWasUnavailable = true;
+    }
+  };
+  const start = (enabled) => {
+    stop();
+    serverWasUnavailable = false;
+    if (!enabled) return;
+    checkServer();
+    restartReconnectTimer = window.setInterval(checkServer, 3000);
+  };
+  app.ui.settings.addSetting({
+    id: RESTART_RECONNECT_SETTING,
+    category: ["界面", "连接"],
+    name: "ComfyUI 重启后自动刷新并重连",
+    tooltip: "服务恢复后自动刷新当前网页，不会关闭页面；用于让新增节点和前端功能立即生效。",
+    type: "boolean",
+    defaultValue: true,
+    onChange: start,
+  });
+  start(app.ui.settings.getSettingValue(RESTART_RECONNECT_SETTING, true));
+}
 
 function h3Settings(duration, aspectRatio, megapixels, multiple, secondPassScale = 1, autoCalculate = true, manualFrames = 362) {
   const seconds = Math.min(15, Math.max(4, Number(duration) || 15));
@@ -2360,11 +2454,16 @@ function decorateMultiTimeGuide(node) {
 // frontends serialize dynamically added widgets even when serialize=false;
 // keeping this list fixed prevents saved strengths and LoRA names from moving.
 const STABLE_MULTI_LORA_NODE = "StableMultiLoRALoader";
+const H3_UNIVERSAL_LINE_SWITCH_NODE = "H3UniversalLineSwitch";
 const STABLE_MULTI_LORA_MAX = 16;
 const STABLE_MULTI_LORA_SYNC_TYPE = "STABLE_MULTI_LORA_CONFIG";
 
 function isStableMultiLoraNode(node) {
   return node?.comfyClass === STABLE_MULTI_LORA_NODE || node?.type === STABLE_MULTI_LORA_NODE;
+}
+
+function isUniversalLineSwitchNode(node) {
+  return node?.comfyClass === H3_UNIVERSAL_LINE_SWITCH_NODE || node?.type === H3_UNIVERSAL_LINE_SWITCH_NODE;
 }
 
 function stableMultiLoraWidget(node, name) {
@@ -2459,16 +2558,49 @@ function applyStableMultiLoraConfig(node, config) {
 function stableMultiLoraInputSource(node, name) {
   const index = node.inputs?.findIndex((input) => input.name === name) ?? -1;
   if (index < 0) return null;
+  return stableMultiLoraInputSourceAt(node, index);
+}
+
+function stableMultiLoraInputSourceAt(node, index) {
   const link = node.inputs[index]?.link;
   return node.getInputNode?.(index)
     || (link != null ? node.graph?.getNodeById(node.graph.links?.[link]?.origin_id) : null);
 }
 
+function stableMultiLoraSyncSource(node) {
+  let source = stableMultiLoraInputSource(node, "lora_sync");
+  const visited = new Set([node]);
+  // A universal line switch is transparent when on. Follow through it so the
+  // downstream LoRA loader can still recognise and mirror its real source.
+  while (source && isUniversalLineSwitchNode(source) && !visited.has(source)) {
+    visited.add(source);
+    const enabled = Boolean(source.widgets?.find((widget) => widget.name === "enabled")?.value);
+    if (!enabled) return null;
+    const inputIndex = source.inputs?.findIndex((input) => input.name === "value"
+      || input.name === "输入（任意类型）" || input.type === "*") ?? -1;
+    if (inputIndex < 0) return null;
+    source = stableMultiLoraInputSourceAt(source, inputIndex);
+  }
+  return source;
+}
+
 function ensureStableMultiLoraSyncPorts(node) {
-  if (!node.inputs?.some((input) => input.name === "lora_sync")) {
+  const isSyncPort = (port) => port?.type === STABLE_MULTI_LORA_SYNC_TYPE
+    || port?.name === "lora_sync"
+    || port?.name === "LoRA 配置同步";
+  // Older frontend builds added a compatibility port even though the backend
+  // already supplied one with its translated label. Keep the backend port and
+  // clean that accidental extra port from existing workflows.
+  const removeDuplicatePorts = (ports, removePort) => {
+    const indexes = (ports || []).flatMap((port, index) => isSyncPort(port) ? [index] : []);
+    for (const index of indexes.slice(1).reverse()) removePort?.call(node, index);
+  };
+  removeDuplicatePorts(node.inputs, node.removeInput);
+  removeDuplicatePorts(node.outputs, node.removeOutput);
+  if (!node.inputs?.some(isSyncPort)) {
     node.addInput?.("lora_sync", STABLE_MULTI_LORA_SYNC_TYPE, { label: "LoRA 配置同步" });
   }
-  if (!node.outputs?.some((output) => output.name === "lora_sync")) {
+  if (!node.outputs?.some(isSyncPort)) {
     node.addOutput?.("lora_sync", STABLE_MULTI_LORA_SYNC_TYPE, { label: "LoRA 配置同步" });
   }
 }
@@ -2478,7 +2610,7 @@ function notifyStableMultiLoraConfigChanged(node) {
 }
 
 function refreshStableMultiLoraSync(node) {
-  const source = stableMultiLoraInputSource(node, "lora_sync");
+  const source = stableMultiLoraSyncSource(node);
   const validSource = source && source !== node && isStableMultiLoraNode(source) ? source : null;
   const sourceChanged = node._stableMultiLoraSyncSource !== validSource;
   if (sourceChanged) {
@@ -2620,6 +2752,10 @@ function createStableMultiLoraLoader(node) {
 
 app.registerExtension({
   name: "h3.media_board",
+  setup() {
+    setupTopToolbarActionsVisibility();
+    setupRestartReconnect();
+  },
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData?.name === "H3MediaBoard") {
       const priorConfigure = nodeType.prototype.onConfigure;
