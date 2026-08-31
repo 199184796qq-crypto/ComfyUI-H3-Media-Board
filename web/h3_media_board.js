@@ -2361,6 +2361,7 @@ function decorateMultiTimeGuide(node) {
 // keeping this list fixed prevents saved strengths and LoRA names from moving.
 const STABLE_MULTI_LORA_NODE = "StableMultiLoRALoader";
 const STABLE_MULTI_LORA_MAX = 16;
+const STABLE_MULTI_LORA_SYNC_TYPE = "STABLE_MULTI_LORA_CONFIG";
 
 function isStableMultiLoraNode(node) {
   return node?.comfyClass === STABLE_MULTI_LORA_NODE || node?.type === STABLE_MULTI_LORA_NODE;
@@ -2368,6 +2369,153 @@ function isStableMultiLoraNode(node) {
 
 function stableMultiLoraWidget(node, name) {
   return node.widgets?.find((widget) => widget.name === name);
+}
+
+function stableMultiLoraConfigFromWidgets(node) {
+  const numberOr = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+  const count = Math.max(1, Math.min(
+    STABLE_MULTI_LORA_MAX,
+    Number(stableMultiLoraWidget(node, "lora_count")?.value) || 1,
+  ));
+  return {
+    version: 1,
+    lora_count: count,
+    rows: Array.from({ length: count }, (_, offset) => {
+      const index = offset + 1;
+      return {
+        lora: stableMultiLoraWidget(node, `lora_${index}`)?.value ?? "(绕过)",
+        model_strength: numberOr(stableMultiLoraWidget(node, `model_strength_${index}`)?.value, 1),
+        clip_strength: numberOr(stableMultiLoraWidget(node, `clip_strength_${index}`)?.value, 1),
+        bypass: Boolean(stableMultiLoraWidget(node, `bypass_${index}`)?.value),
+      };
+    }),
+  };
+}
+
+function normalizeStableMultiLoraConfig(config) {
+  if (!config || !Array.isArray(config.rows)) return null;
+  const numberOr = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+  const count = Math.max(1, Math.min(STABLE_MULTI_LORA_MAX, Number(config.lora_count) || 1));
+  return {
+    version: 1,
+    lora_count: count,
+    rows: Array.from({ length: count }, (_, offset) => {
+      const row = config.rows[offset] || {};
+      return {
+        lora: row.lora || "(绕过)",
+        model_strength: numberOr(row.model_strength, 1),
+        clip_strength: numberOr(row.clip_strength, 1),
+        bypass: Boolean(row.bypass),
+      };
+    }),
+  };
+}
+
+function stableMultiLoraConfigsEqual(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function setStableMultiLoraWidgetValue(widget, value) {
+  if (!widget) return;
+  widget.value = value;
+  if (widget._state) widget._state.value = value;
+}
+
+function setStableMultiLoraDisabled(widget, disabled) {
+  if (!widget) return;
+  widget.disabled = disabled;
+  widget.options ??= {};
+  widget.options.disabled = disabled;
+  if (widget._state) widget._state.disabled = disabled;
+  if (widget.element) widget.element.disabled = disabled;
+}
+
+function setStableMultiLoraConfigDisabled(node, disabled) {
+  setStableMultiLoraDisabled(stableMultiLoraWidget(node, "lora_count"), disabled);
+  for (let index = 1; index <= STABLE_MULTI_LORA_MAX; index++) {
+    setStableMultiLoraDisabled(stableMultiLoraWidget(node, `lora_${index}`), disabled);
+    setStableMultiLoraDisabled(stableMultiLoraWidget(node, `model_strength_${index}`), disabled);
+    setStableMultiLoraDisabled(stableMultiLoraWidget(node, `clip_strength_${index}`), disabled);
+    setStableMultiLoraDisabled(stableMultiLoraWidget(node, `bypass_${index}`), disabled);
+  }
+}
+
+function applyStableMultiLoraConfig(node, config) {
+  const normalized = normalizeStableMultiLoraConfig(config);
+  if (!normalized) return;
+  node._stableMultiLoraApplyingConfig = true;
+  setStableMultiLoraWidgetValue(stableMultiLoraWidget(node, "lora_count"), normalized.lora_count);
+  for (let index = 1; index <= STABLE_MULTI_LORA_MAX; index++) {
+    const row = normalized.rows[index - 1] || { lora: "(绕过)", model_strength: 1, clip_strength: 1, bypass: false };
+    setStableMultiLoraWidgetValue(stableMultiLoraWidget(node, `lora_${index}`), row.lora);
+    setStableMultiLoraWidgetValue(stableMultiLoraWidget(node, `model_strength_${index}`), row.model_strength);
+    setStableMultiLoraWidgetValue(stableMultiLoraWidget(node, `clip_strength_${index}`), row.clip_strength);
+    setStableMultiLoraWidgetValue(stableMultiLoraWidget(node, `bypass_${index}`), row.bypass);
+  }
+  refreshStableMultiLora(node, normalized.lora_count);
+  node._stableMultiLoraApplyingConfig = false;
+}
+
+function stableMultiLoraInputSource(node, name) {
+  const index = node.inputs?.findIndex((input) => input.name === name) ?? -1;
+  if (index < 0) return null;
+  const link = node.inputs[index]?.link;
+  return node.getInputNode?.(index)
+    || (link != null ? node.graph?.getNodeById(node.graph.links?.[link]?.origin_id) : null);
+}
+
+function ensureStableMultiLoraSyncPorts(node) {
+  if (!node.inputs?.some((input) => input.name === "lora_sync")) {
+    node.addInput?.("lora_sync", STABLE_MULTI_LORA_SYNC_TYPE, { label: "LoRA 配置同步" });
+  }
+  if (!node.outputs?.some((output) => output.name === "lora_sync")) {
+    node.addOutput?.("lora_sync", STABLE_MULTI_LORA_SYNC_TYPE, { label: "LoRA 配置同步" });
+  }
+}
+
+function notifyStableMultiLoraConfigChanged(node) {
+  node._stableMultiLoraListeners?.forEach((listener) => listener());
+}
+
+function refreshStableMultiLoraSync(node) {
+  const source = stableMultiLoraInputSource(node, "lora_sync");
+  const validSource = source && source !== node && isStableMultiLoraNode(source) ? source : null;
+  const sourceChanged = node._stableMultiLoraSyncSource !== validSource;
+  if (sourceChanged) {
+    node._stableMultiLoraSyncSource?._stableMultiLoraListeners?.delete(node._stableMultiLoraSyncListener);
+    node._stableMultiLoraSyncSource = validSource;
+    if (validSource) {
+      validSource._stableMultiLoraListeners ??= new Set();
+      validSource._stableMultiLoraListeners.add(node._stableMultiLoraSyncListener);
+    }
+  }
+  if (validSource) {
+    const sourceConfig = normalizeStableMultiLoraConfig(
+      validSource._stableMultiLoraEffectiveConfig?.() || stableMultiLoraConfigFromWidgets(validSource),
+    );
+    if (!sourceConfig) return;
+    if (!node._stableMultiLoraLocalConfig) {
+      node._stableMultiLoraLocalConfig = stableMultiLoraConfigFromWidgets(node);
+    }
+    const configChanged = !stableMultiLoraConfigsEqual(node._stableMultiLoraSyncedConfig, sourceConfig);
+    if (configChanged) {
+      applyStableMultiLoraConfig(node, sourceConfig);
+      node._stableMultiLoraSyncedConfig = sourceConfig;
+    }
+    setStableMultiLoraConfigDisabled(node, true);
+    node._stableMultiLoraEffectiveConfig = () => node._stableMultiLoraSyncedConfig;
+    if (configChanged) notifyStableMultiLoraConfigChanged(node);
+    return;
+  }
+  const wasSynced = sourceChanged || Boolean(node._stableMultiLoraLocalConfig || node._stableMultiLoraSyncedConfig);
+  if (node._stableMultiLoraLocalConfig) {
+    applyStableMultiLoraConfig(node, node._stableMultiLoraLocalConfig);
+    delete node._stableMultiLoraLocalConfig;
+  }
+  delete node._stableMultiLoraSyncedConfig;
+  setStableMultiLoraConfigDisabled(node, false);
+  node._stableMultiLoraEffectiveConfig = () => stableMultiLoraConfigFromWidgets(node);
+  if (wasSynced) notifyStableMultiLoraConfigChanged(node);
 }
 
 function setStableMultiLoraVisible(widget, visible) {
@@ -2426,18 +2574,48 @@ function refreshStableMultiLora(node, requestedCount) {
 function createStableMultiLoraLoader(node) {
   if (node._stableMultiLoraReady) {
     refreshStableMultiLora(node);
+    refreshStableMultiLoraSync(node);
     return;
   }
   node._stableMultiLoraReady = true;
-  const countWidget = stableMultiLoraWidget(node, "lora_count");
-  if (countWidget) {
-    const priorCallback = countWidget.callback;
-    countWidget.callback = (value, ...args) => {
-      priorCallback?.call(countWidget, value, ...args);
-      refreshStableMultiLora(node, value);
-    };
+  ensureStableMultiLoraSyncPorts(node);
+  node._stableMultiLoraSyncListener = () => refreshStableMultiLoraSync(node);
+  const widgetNames = ["lora_count"];
+  for (let index = 1; index <= STABLE_MULTI_LORA_MAX; index++) {
+    widgetNames.push(`lora_${index}`, `model_strength_${index}`, `clip_strength_${index}`, `bypass_${index}`);
   }
+  widgetNames.forEach((name) => {
+    const widget = stableMultiLoraWidget(node, name);
+    if (!widget || widget._stableMultiLoraSyncCallback) return;
+    const priorCallback = widget.callback;
+    widget._stableMultiLoraSyncCallback = true;
+    widget.callback = (value, ...args) => {
+      if (node._stableMultiLoraSyncSource && !node._stableMultiLoraApplyingConfig) {
+        requestAnimationFrame(() => refreshStableMultiLoraSync(node));
+        return;
+      }
+      priorCallback?.call(widget, value, ...args);
+      if (name === "lora_count") refreshStableMultiLora(node, value);
+      notifyStableMultiLoraConfigChanged(node);
+    };
+  });
   refreshStableMultiLora(node);
+  refreshStableMultiLoraSync(node);
+  const previousConnections = node.onConnectionsChange;
+  node.onConnectionsChange = function (...args) {
+    previousConnections?.apply(this, args);
+    refreshStableMultiLoraSync(node);
+  };
+  const previousRemoved = node.onRemoved;
+  node.onRemoved = function (...args) {
+    node._stableMultiLoraSyncSource?._stableMultiLoraListeners?.delete(node._stableMultiLoraSyncListener);
+    previousRemoved?.apply(this, args);
+  };
+  const previousDraw = node.onDrawForeground;
+  node.onDrawForeground = function (ctx) {
+    previousDraw?.call(this, ctx);
+    refreshStableMultiLoraSync(node);
+  };
 }
 
 app.registerExtension({

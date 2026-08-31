@@ -6,6 +6,7 @@ import comfy.utils
 
 
 BYPASS_LORA = "(绕过)"
+LORA_CONFIG_SYNC = "STABLE_MULTI_LORA_CONFIG"
 
 
 class StableMultiLoRALoader:
@@ -73,11 +74,15 @@ class StableMultiLoRALoader:
                     "CLIP",
                     {"tooltip": "Optional. When connected, each row uses its CLIP strength."},
                 ),
+                "lora_sync": (
+                    LORA_CONFIG_SYNC,
+                    {"label": "LoRA 配置同步", "tooltip": "接上游稳定版多 LoRA 加载器的同步输出后，忽略本节点自己的 LoRA 配置。"},
+                ),
             },
         }
 
-    RETURN_TYPES = ("MODEL", "CLIP")
-    RETURN_NAMES = ("模型", "CLIP")
+    RETURN_TYPES = ("MODEL", "CLIP", LORA_CONFIG_SYNC)
+    RETURN_NAMES = ("模型", "CLIP", "LoRA 配置同步")
     FUNCTION = "load_loras"
     CATEGORY = "loaders"
     DESCRIPTION = "Stable multi-LoRA loader. Use LoRA count +/- to show rows; each row can be bypassed independently."
@@ -90,19 +95,63 @@ class StableMultiLoRALoader:
             self._cache = {path: cached}
         return cached
 
-    def load_loras(self, model, lora_count=1, clip=None, **kwargs):
-        count = max(1, min(self.MAX_LORAS, int(lora_count)))
+    @classmethod
+    def _local_config(cls, lora_count, values):
+        count = max(1, min(cls.MAX_LORAS, int(lora_count)))
+        return {
+            "version": 1,
+            "lora_count": count,
+            "rows": [
+                {
+                    "lora": values.get(f"lora_{index}", BYPASS_LORA),
+                    "model_strength": float(values.get(f"model_strength_{index}", 1.0)),
+                    "clip_strength": float(values.get(f"clip_strength_{index}", 1.0)),
+                    "bypass": bool(values.get(f"bypass_{index}", False)),
+                }
+                for index in range(1, count + 1)
+            ],
+        }
+
+    @classmethod
+    def _normalize_sync_config(cls, value):
+        if not isinstance(value, dict) or not isinstance(value.get("rows"), list):
+            return None
+        try:
+            count = max(1, min(cls.MAX_LORAS, int(value.get("lora_count", 1))))
+            rows = []
+            for index in range(count):
+                row = value["rows"][index] if index < len(value["rows"]) else {}
+                if not isinstance(row, dict):
+                    row = {}
+                rows.append(
+                    {
+                        "lora": row.get("lora", BYPASS_LORA),
+                        "model_strength": float(row.get("model_strength", 1.0)),
+                        "clip_strength": float(row.get("clip_strength", 1.0)),
+                        "bypass": bool(row.get("bypass", False)),
+                    }
+                )
+            return {"version": 1, "lora_count": count, "rows": rows}
+        except (TypeError, ValueError):
+            return None
+
+    def load_loras(self, model, lora_count=1, clip=None, lora_sync=None, **kwargs):
+        config = self._normalize_sync_config(lora_sync) or self._local_config(lora_count, kwargs)
+        count = config["lora_count"]
+        if lora_sync is not None and self._normalize_sync_config(lora_sync) is not None:
+            print("[稳定多 LoRA] 使用上游 LoRA 配置同步。")
         applied = []
         for index in range(1, count + 1):
-            lora_name = kwargs.get(f"lora_{index}", BYPASS_LORA)
+            row = config["rows"][index - 1]
+            lora_name = row["lora"]
             if lora_name in (None, "", BYPASS_LORA, "None"):
                 continue
-            if bool(kwargs.get(f"bypass_{index}", False)):
+            if row["bypass"]:
                 print(f"[稳定多 LoRA] 跳过第 {index} 条：{lora_name}")
                 continue
 
-            model_strength = float(kwargs.get(f"model_strength_{index}", 1.0))
-            clip_strength = float(kwargs.get(f"clip_strength_{index}", 1.0)) if clip is not None else 0.0
+            model_strength = row["model_strength"]
+            clip_strength = row["clip_strength"] if clip is not None else 0.0
             if model_strength == 0 and clip_strength == 0:
                 continue
 
@@ -123,7 +172,7 @@ class StableMultiLoRALoader:
 
         if not applied:
             print("[稳定多 LoRA] 未加载任何 LoRA。")
-        return (model, clip)
+        return (model, clip, config)
 
 
 NODE_CLASS_MAPPINGS = {"StableMultiLoRALoader": StableMultiLoRALoader}
