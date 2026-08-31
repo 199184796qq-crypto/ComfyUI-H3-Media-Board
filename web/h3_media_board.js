@@ -169,9 +169,9 @@ function readManifest(widget) {
     const parsed = JSON.parse(widget.value || "{}");
     return Object.fromEntries(Object.keys(LIMITS).map((kind) => {
       if (!Array.isArray(parsed[kind])) return [kind, []];
-      // Slot 1 is the H3 first frame and slot 2 is the last frame.  Keep a
-      // deliberately empty first slot so a last-frame-only workflow survives.
-      if (kind === "image") return [kind, parsed[kind].slice(0, LIMITS[kind]).map((item) => item || null)];
+      // Image slots 1/2 are H3's first/last frame. Audio slots are independent
+      // cues, so both keep their exact positions and may deliberately be empty.
+      if (kind === "image" || kind === "audio") return [kind, parsed[kind].slice(0, LIMITS[kind]).map((item) => item || null)];
       return [kind, parsed[kind].filter(Boolean).slice(0, LIMITS[kind])];
     }));
   } catch (_) {
@@ -185,6 +185,12 @@ function compactMedia(state, kind) {
     // Keep image_1 in place (it is the optional first frame); compact only
     // image_2 onward so deleting a later reference still renumbers the tail.
     state.image = [images[0] || null, ...images.slice(1).filter(Boolean).slice(0, LIMITS.image - 1)];
+    return;
+  }
+  if (kind === "audio") {
+    // Audio is position-based: deleting audio_1 must not turn audio_2 or
+    // audio_3 into a different cue. Preserve empty slots exactly as saved.
+    state.audio = Array.isArray(state.audio) ? state.audio.slice(0, LIMITS.audio).map((item) => item || null) : [];
     return;
   }
   state[kind] = Array.isArray(state[kind]) ? state[kind].filter(Boolean).slice(0, LIMITS[kind]) : [];
@@ -1498,14 +1504,19 @@ function createBoard(node) {
             // pulls the following images up, preserving a continuous tail.
             else if (index === 0) state.image[0] = null;
             else state.image.splice(index, 1);
+          } else if (kind === "audio") {
+            // Unlike images and videos, audio cues are independent slots. A
+            // user can leave #1/#2 empty and use #3 directly; deletion keeps
+            // the remaining cue numbers unchanged.
+            state.audio[index] = uploaded || null;
           } else if (uploaded) {
             // A filled card is deliberately replaced. Dropping/uploading into
             // any empty later card appends after the existing consecutive set.
             if (state[kind][index]) state[kind][index] = uploaded;
             else state[kind].push(uploaded);
           } else state[kind].splice(index, 1);
-          // Images preserve the intentional first-frame gap; all other media
-          // (and image slots from #2 onward) remain consecutively numbered.
+          // Images preserve the intentional first-frame gap and audio keeps
+          // all three independent cue positions; video remains consecutive.
           compactMedia(state, kind);
           persist(state); render();
         }, {
@@ -1920,7 +1931,7 @@ function decorateUnpacker(node) {
     );
     node._h3MediaCounts = {
       image: state.image.filter(Boolean).length,
-      audio: state.audio.length,
+      audio: state.audio.filter(Boolean).length,
       video: state.video.length,
     };
     const enabled = [
@@ -2127,7 +2138,7 @@ function decorateVideoModeControl(node) {
     if (!manifestWidget) { node._h3AutoMode = null; return; }
     if (node.properties?.h3_mode_manual_override) { node._h3AutoMode = null; return; }
     const media = readManifest(manifestWidget);
-    const imageCount = media.image.filter(Boolean).length, audioCount = media.audio.length, videoCount = media.video.length;
+    const imageCount = media.image.filter(Boolean).length, audioCount = media.audio.filter(Boolean).length, videoCount = media.video.length;
     // H3 图文/图生只保留给 1–2 张纯图片；第三张图片起改用多参参考。
     const useMultiReference = imageCount >= 3 || audioCount > 0 || videoCount > 0;
     const reason = useMultiReference

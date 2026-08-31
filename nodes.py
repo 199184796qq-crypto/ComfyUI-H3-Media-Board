@@ -112,17 +112,17 @@ def _clean_manifest(raw: str | dict[str, Any] | list[dict[str, Any]] | None) -> 
             continue
         for item in items[:limit]:
             if not isinstance(item, dict) or not isinstance(item.get("path"), str):
-                if kind == "image":
+                if kind in {"image", "audio"}:
                     result[kind].append(None)
                 continue
             try:
                 path = _safe_relative_path(item["path"])
             except ValueError:
-                if kind == "image":
+                if kind in {"image", "audio"}:
                     result[kind].append(None)
                 continue
             if not path.is_file():
-                if kind == "image":
+                if kind in {"image", "audio"}:
                     result[kind].append(None)
                 continue
             result[kind].append(
