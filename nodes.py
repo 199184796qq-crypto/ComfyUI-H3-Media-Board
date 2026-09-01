@@ -396,7 +396,8 @@ def _load_video_frames(item: dict[str, str] | None) -> torch.Tensor | None:
 
 def _h3_settings(duration: float, aspect_ratio: str, megapixels: float, multiple: int,
                  second_pass_scale: float = 1.0, auto_calculate: bool = True,
-                 manual_frames: int = 362) -> dict[str, int | float | str | bool]:
+                 manual_frames: int = 362, second_pass_size_mode: str = "倍率放大",
+                 second_pass_megapixels: float = 1.0) -> dict[str, int | float | str | bool]:
     """Match H3 Resolution Selector: MP × 1024² → ratio → nearest multiple."""
     duration = min(15.0, max(4.0, float(duration)))
     megapixels = round(min(16.0, max(0.1, float(megapixels))), 1)
@@ -406,6 +407,24 @@ def _h3_settings(duration: float, aspect_ratio: str, megapixels: float, multiple
     scale = math.sqrt(megapixels * 1024 * 1024 / (width_ratio * height_ratio))
     width = round(width_ratio * scale / multiple) * multiple
     height = round(height_ratio * scale / multiple) * multiple
+    # Keep two decimals here because the native H3 size table also contains
+    # useful exact presets such as 0.98 MP (1344 × 768 at 16:9 / multiple 32).
+    second_pass_megapixels = round(min(16.0, max(0.1, float(second_pass_megapixels))), 2)
+    second_pass_size_mode = "百万原始" if second_pass_size_mode == "百万原始" else "倍率放大"
+    if second_pass_size_mode == "百万原始":
+        # Direct-megapixel mode intentionally does not use the first-pass
+        # dimensions. It follows the same MP / aspect / multiple table as the
+        # H3 base-size selector (e.g. 16:9 at 0.4 MP = 864 × 480).
+        second_scale = math.sqrt(second_pass_megapixels * 1024 * 1024 / (width_ratio * height_ratio))
+        second_pass_width = round(width_ratio * second_scale / multiple) * multiple
+        second_pass_height = round(height_ratio * second_scale / multiple) * multiple
+        second_pass_effective_scale = second_pass_width / max(1, width)
+    else:
+        second_pass_width = max(multiple, round(width * second_pass_scale / multiple) * multiple)
+        second_pass_height = max(multiple, round(height * second_pass_scale / multiple) * multiple)
+        # Preserve the existing FLOAT output value for old scale-based
+        # workflows. Direct-megapixel mode uses its computed ratio instead.
+        second_pass_effective_scale = second_pass_scale
     base_frames = max(5, round(duration * 24))
     calculated_frames = base_frames + (5 - base_frames % 17) % 17
     frames = calculated_frames if auto_calculate else max(1, int(manual_frames))
@@ -413,6 +432,11 @@ def _h3_settings(duration: float, aspect_ratio: str, megapixels: float, multiple
         "duration": duration, "aspect_ratio": aspect_ratio, "megapixels": megapixels,
         "multiple": multiple, "auto_calculate": bool(auto_calculate), "manual_frames": max(1, int(manual_frames)),
         "second_pass_scale": second_pass_scale,
+        "second_pass_size_mode": second_pass_size_mode,
+        "second_pass_megapixels": second_pass_megapixels,
+        "second_pass_width": second_pass_width,
+        "second_pass_height": second_pass_height,
+        "second_pass_effective_scale": second_pass_effective_scale,
         "width": width, "height": height, "frames": frames,
     }
 
@@ -469,6 +493,8 @@ class H3MediaBoard:
                 # workflow widget values by position, so inserting here would
                 # shift old seed and mode values into incompatible inputs.
                 "second_pass_scale": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 4.0, "step": 0.1}),
+                "second_pass_size_mode": (["倍率放大", "百万原始"], {"default": "倍率放大"}),
+                "second_pass_megapixels": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 16.0, "step": 0.01}),
             },
             # A separate forced input guarantees a visible socket in both the
             # legacy canvas and Nodes 2.0.  The local textarea remains usable
@@ -491,7 +517,8 @@ class H3MediaBoard:
                 megapixels: float, multiple: int, auto_calculate: bool, manual_frames: int,
                 noise_seed: int, noise_mode: str, external_prompt: str | None = None,
                 unique_id: str | None = None, noise_after_generate: str = "randomize",
-                second_pass_scale: float = 1.0):
+                second_pass_scale: float = 1.0, second_pass_size_mode: str = "倍率放大",
+                second_pass_megapixels: float = 1.0):
         manifest = _clean_manifest(media_manifest)
         effective_prompt = external_prompt if external_prompt is not None else prompt
         manifest["prompt"] = effective_prompt
@@ -501,6 +528,7 @@ class H3MediaBoard:
         settings = _h3_settings(
             effective_duration, effective_aspect_ratio, megapixels, multiple,
             second_pass_scale, auto_calculate, manual_frames,
+            second_pass_size_mode, second_pass_megapixels,
         )
         effective_seed = _effective_noise_seed(noise_seed, noise_mode, unique_id)
         settings["noise"] = {
@@ -517,7 +545,7 @@ class H3MediaBoard:
         # connected; append the second-pass scale as a direct FLOAT output.
         return {
             "ui": {"h3_media_board": [manifest]},
-            "result": (runtime_manifest, noise, float(settings["second_pass_scale"])),
+            "result": (runtime_manifest, noise, float(settings["second_pass_effective_scale"])),
         }
 
 
@@ -566,7 +594,8 @@ class H3MediaBoardUnpack:
             settings.get("duration", 15.0), settings.get("aspect_ratio", "9:16"),
             settings.get("megapixels", 0.4), settings.get("multiple", 32),
             settings.get("second_pass_scale", 1.0), settings.get("auto_calculate", True),
-            settings.get("manual_frames", 362),
+            settings.get("manual_frames", 362), settings.get("second_pass_size_mode", "倍率放大"),
+            settings.get("second_pass_megapixels", 1.0),
         )
         noise_settings = settings.get("noise", {}) if isinstance(settings, dict) else {}
         noise = media_board.get("_noise_object") if isinstance(media_board, dict) else None
@@ -574,7 +603,7 @@ class H3MediaBoardUnpack:
             noise = _H3SeedNoise(int(noise_settings.get("effective_seed", noise_settings.get("seed", 0))))
         return tuple(images + videos + video_audios + audios + [
             str(media_board.get("prompt", "")), params["duration"], params["width"], params["height"], params["frames"], noise,
-            float(params["second_pass_scale"]),
+            float(params["second_pass_effective_scale"]),
         ])
 
 
@@ -1105,6 +1134,42 @@ class H3UniversalLineSwitch:
         return (value if enabled else None,)
 
 
+class H3WorkflowSwitchboard:
+    """A canvas-side controller for selected node groups and numbered nodes.
+
+    The actual bypassing is deliberately handled by the browser: groups are a
+    LiteGraph concept and are not part of ComfyUI's backend prompt.  The JSON
+    widget keeps the selected targets portable inside ordinary workflow files.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "control_state": (
+                    "STRING",
+                    {
+                        "default": "[]",
+                        "multiline": False,
+                        "tooltip": "Internal state for the selected workflow controls.",
+                    },
+                ),
+            },
+        }
+
+    RETURN_TYPES = ()
+    FUNCTION = "apply"
+    OUTPUT_NODE = True
+    CATEGORY = "H3 / Media"
+    DESCRIPTION = "控制已添加的节点组或 # 编号节点；可启用、绕过及拖拽排序。"
+
+    def apply(self, control_state: str = "[]"):
+        # Canvas-side state is applied before the workflow is queued.  Keeping
+        # this node an output node makes its control state persist and travel
+        # with API/workflow exports without adding any runtime data links.
+        return {}
+
+
 NODE_CLASS_MAPPINGS = {
     "H3MediaBoard": H3MediaBoard,
     "H3MediaBoardUnpack": H3MediaBoardUnpack,
@@ -1115,6 +1180,7 @@ NODE_CLASS_MAPPINGS = {
     "DynamicMediaBoard": DynamicMediaBoard,
     "PanoramaViewerSnapshot": PanoramaViewerSnapshot,
     "H3UniversalLineSwitch": H3UniversalLineSwitch,
+    "H3WorkflowSwitchboard": H3WorkflowSwitchboard,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -1127,4 +1193,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "DynamicMediaBoard": "动态素材板（图片 / 音频）",
     "PanoramaViewerSnapshot": "360° 全景查看与截图",
     "H3UniversalLineSwitch": "通用线路开关（任意类型）",
+    "H3WorkflowSwitchboard": "流程开关控制器（组 / # 节点）",
 }

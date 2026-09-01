@@ -105,7 +105,7 @@ function setupRestartReconnect() {
   start(app.ui.settings.getSettingValue(RESTART_RECONNECT_SETTING, true));
 }
 
-function h3Settings(duration, aspectRatio, megapixels, multiple, secondPassScale = 1, autoCalculate = true, manualFrames = 362) {
+function h3Settings(duration, aspectRatio, megapixels, multiple, secondPassScale = 1, autoCalculate = true, manualFrames = 362, secondPassSizeMode = "倍率放大", secondPassMegapixels = 1) {
   const seconds = Math.min(15, Math.max(4, Number(duration) || 15));
   const mp = Number(Math.min(16, Math.max(0.1, Number(megapixels) || 0.4)).toFixed(1));
   const align = Math.min(128, Math.max(8, Math.round(Number(multiple) || 32)));
@@ -114,10 +114,19 @@ function h3Settings(duration, aspectRatio, megapixels, multiple, secondPassScale
   const scale = Math.sqrt(mp * 1024 * 1024 / (ratioWidth * ratioHeight));
   const width = Math.round(ratioWidth * scale / align) * align;
   const height = Math.round(ratioHeight * scale / align) * align;
+  const directMegapixels = Number(Math.min(16, Math.max(0.1, Number(secondPassMegapixels) || 1)).toFixed(2));
+  const directMode = secondPassSizeMode === "百万原始";
+  const directScale = Math.sqrt(directMegapixels * 1024 * 1024 / (ratioWidth * ratioHeight));
+  const secondPassWidth = directMode
+    ? Math.round(ratioWidth * directScale / align) * align
+    : Math.max(align, Math.round(width * scaleFactor / align) * align);
+  const secondPassHeight = directMode
+    ? Math.round(ratioHeight * directScale / align) * align
+    : Math.max(align, Math.round(height * scaleFactor / align) * align);
   const baseFrames = Math.max(5, Math.round(seconds * 24));
   const calculatedFrames = baseFrames + (5 - baseFrames % 17) % 17;
   const automatic = Boolean(autoCalculate);
-  return { duration: seconds, aspectRatio, megapixels: mp, multiple: align, secondPassScale: scaleFactor, autoCalculate: automatic, manualFrames: Math.max(1, Math.round(Number(manualFrames) || 1)), width, height, frames: automatic ? calculatedFrames : Math.max(1, Math.round(Number(manualFrames) || 1)) };
+  return { duration: seconds, aspectRatio, megapixels: mp, multiple: align, secondPassScale: scaleFactor, secondPassSizeMode: directMode ? "百万原始" : "倍率放大", secondPassMegapixels: directMegapixels, secondPassWidth, secondPassHeight, autoCalculate: automatic, manualFrames: Math.max(1, Math.round(Number(manualFrames) || 1)), width, height, frames: automatic ? calculatedFrames : Math.max(1, Math.round(Number(manualFrames) || 1)) };
 }
 
 function promptH3Overrides(prompt) {
@@ -317,6 +326,7 @@ function injectStyle() {
     .h3-media-board .mb-setting-checkbox label { color:#d4e0e3; font-size:12px; }
     .h3-media-board .mb-setting input[type="checkbox"] { width:auto; height:auto; padding:0; accent-color:#69ee7a; transform:scale(1.18); }
     .h3-media-board .mb-setting input:disabled { opacity:.45; cursor:not-allowed; }
+    .h3-media-board .mb-setting-output-value { display:flex; align-items:center; min-width:0; height:29px; padding:0 8px; overflow:hidden; border:1px solid #47656e; border-radius:5px; color:#86edf6; background:#102027; font:800 12px ui-monospace,Consolas,monospace; white-space:nowrap; }
     .h3-media-board .mb-output-summary { grid-column:1 / -1; padding:7px 9px; border-left:3px solid #69ee7a; border-radius:4px; color:#76ec87; background:#13271a; font-size:13px; font-weight:800; letter-spacing:.15px; }
     .h3-media-board .mb-versions { margin:4px 0 11px; padding:7px 9px; border:1px solid #4c626a; border-radius:7px; background:#182127; }.h3-media-board .mb-versions-head { display:flex; align-items:center; gap:8px; }.h3-media-board .mb-versions-toggle { padding:0; border:0; color:#d7edf4; background:transparent; cursor:pointer; font:800 12px system-ui,sans-serif; }.h3-media-board .mb-versions-toggle:hover { color:#fff; }.h3-media-board .mb-versions-current { margin-left:auto; color:#8fa9b4; font-size:10px; }.h3-media-board .mb-versions-body { display:flex; flex-wrap:nowrap; align-items:center; gap:7px; margin-top:7px; min-width:0; }.h3-media-board .mb-versions select { flex:0 1 390px; width:390px; min-width:150px; }.h3-media-board .mb-versions select, .h3-media-board .mb-versions button { height:26px; padding:3px 7px; border:1px solid #4b626c; border-radius:4px; color:#e4eef2; background:#11191e; font:11px system-ui,sans-serif; }.h3-media-board .mb-versions button { flex:none; cursor:pointer; }.h3-media-board .mb-versions button:hover { border-color:#72d9e5; background:#1d3a43; }.h3-media-board .mb-versions button:last-child { margin-left:auto; color:#ffc6c8; border-color:#75484e; background:#2c1b20; }.h3-media-board .mb-versions button:last-child:hover { border-color:#ed7b81; color:#fff0f1; background:#47242a; }.h3-media-board .mb-versions button:disabled { cursor:not-allowed; opacity:.45; }
     /* Keep the seed controls as a compact toolbar.  The panel may be wide,
@@ -368,6 +378,42 @@ function injectStyle() {
     .mb-card-image-preview { position:fixed; z-index:10006; display:grid; place-items:center; max-width:372px; max-height:332px; padding:6px; overflow:hidden; border:1px solid #5f7781; border-radius:8px; background:#11161aeF; box-shadow:0 10px 26px #000c; pointer-events:none; }
     .mb-card-image-preview img { display:block; max-width:min(360px,calc(100vw - 32px)); max-height:min(320px,calc(100vh - 32px)); width:auto; height:auto; object-fit:contain; border-radius:4px; }
     .mb-preview { position:fixed; z-index:10000; inset:0; display:grid; place-items:center; background:#000b; } .mb-preview img { max-width:90vw; max-height:90vh; }
+  `;
+  document.head.appendChild(style);
+}
+
+function injectWorkflowSwitchboardStyle() {
+  if (document.getElementById("h3-workflow-switchboard-style")) return;
+  const style = document.createElement("style");
+  style.id = "h3-workflow-switchboard-style";
+  style.textContent = `
+    .h3-workflow-switchboard { box-sizing:border-box; display:flex; flex-direction:column; gap:8px; width:100%; min-width:390px; padding:10px; color:#e6edf0; font:12px system-ui,sans-serif; user-select:none; }
+    .h3-workflow-switchboard .h3-ws-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+    .h3-workflow-switchboard .h3-ws-title { color:#ebf8fb; font-size:14px; font-weight:800; }
+    .h3-workflow-switchboard .h3-ws-hint { color:#91a7b0; font-size:10px; white-space:nowrap; }
+    .h3-workflow-switchboard .h3-ws-size { width:auto; min-width:66px; height:24px; padding:0 4px; font-size:10px; }
+    .h3-workflow-switchboard .h3-ws-add { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:6px; }
+    .h3-workflow-switchboard select, .h3-workflow-switchboard button { box-sizing:border-box; height:28px; border:1px solid #4c626a; border-radius:5px; color:#dcebf0; background:#172126; font:11px system-ui,sans-serif; }
+    .h3-workflow-switchboard select { min-width:0; padding:0 6px; }
+    .h3-workflow-switchboard button { padding:0 8px; cursor:pointer; font-weight:700; }
+    .h3-workflow-switchboard button:hover { border-color:#75d7e4; color:#f2fdff; background:#213942; }
+    .h3-workflow-switchboard .h3-ws-refresh { color:#b4d5dc; }
+    .h3-workflow-switchboard .h3-ws-list { display:flex; flex-direction:column; gap:6px; min-height:36px; }
+    .h3-workflow-switchboard .h3-ws-empty { padding:10px; border:1px dashed #4c626a; border-radius:6px; color:#93a0a6; background:#131b20; text-align:center; font-size:11px; }
+    .h3-workflow-switchboard .h3-ws-row { display:grid; grid-template-columns:19px minmax(0,1fr) 44px 25px; align-items:center; gap:6px; min-height:36px; padding:4px 5px; border:1px solid #43555e; border-radius:7px; background:linear-gradient(135deg,#1f2b31,#171e23); }
+    .h3-workflow-switchboard .h3-ws-row.dragging { opacity:.45; }
+    .h3-workflow-switchboard .h3-ws-row.drop-target { border-color:#68e3ef; box-shadow:0 0 0 1px #68e3ef66; }
+    .h3-workflow-switchboard .h3-ws-grip { color:#86a4ad; cursor:grab; font-size:15px; line-height:1; text-align:center; touch-action:none; user-select:none; }
+    .h3-workflow-switchboard .h3-ws-grip:active { cursor:grabbing; }
+    .h3-workflow-switchboard .h3-ws-label { min-width:0; overflow:hidden; color:#e5f0f3; text-overflow:ellipsis; white-space:nowrap; font-weight:700; }
+    .h3-workflow-switchboard .h3-ws-label small { margin-left:5px; color:#92abb3; font-weight:400; }
+    .h3-workflow-switchboard .h3-ws-toggle { position:relative; width:40px; height:22px; padding:0; border-radius:99px; border-color:#5c666c; background:#596166; }
+    .h3-workflow-switchboard .h3-ws-toggle::after { content:""; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:#c9d0d2; transition:transform .15s ease; }
+    .h3-workflow-switchboard .h3-ws-toggle.enabled { border-color:#46d879; background:#1fdc53; }
+    .h3-workflow-switchboard .h3-ws-toggle.enabled::after { transform:translateX(18px); background:#f3fff5; }
+    .h3-workflow-switchboard .h3-ws-remove { padding:0; border-color:#754c52; color:#f5b8bd; background:#382126; font-size:17px; line-height:20px; }
+    .h3-workflow-switchboard .h3-ws-remove:hover { border-color:#f17e87; color:#fff0f1; background:#51282e; }
+    .h3-workflow-switchboard .h3-ws-status { min-height:15px; color:#9db4bc; font-size:10px; }
   `;
   document.head.appendChild(style);
 }
@@ -665,9 +711,14 @@ function makeH3SettingsPanel(widgets, node) {
   // every calculation-related input use the exact same frame synchronization
   // path, instead of only updating when the checkbox itself is clicked.
   let syncFrameMode = () => {};
+  let refreshSecondPassControls = () => {};
   const summaryText = () => {
-    const settings = h3Settings(widgets.duration.value, widgets.aspect_ratio.value, widgets.megapixels.value, widgets.multiple.value, widgets.second_pass_scale.value, widgets.auto_calculate.value, widgets.manual_frames.value);
-    return `H3 输出：${settings.width} × ${settings.height} · ${settings.frames} 帧 · ${settings.autoCalculate ? "自动对齐 · " : "手动设置 · "}24 fps`;
+    const settings = h3Settings(
+      widgets.duration.value, widgets.aspect_ratio.value, widgets.megapixels.value, widgets.multiple.value,
+      widgets.second_pass_scale.value, widgets.auto_calculate.value, widgets.manual_frames.value,
+      widgets.second_pass_size_mode.value, widgets.second_pass_megapixels.value,
+    );
+    return `H3 输出：${settings.width} × ${settings.height} · ${settings.frames} 帧 · ${settings.autoCalculate ? "自动对齐 · " : "手动设置 · "}24 fps · 二采 ${settings.secondPassWidth} × ${settings.secondPassHeight}`;
   };
   const createControl = (name, label, type, options = {}) => {
     const field = document.createElement("div"); field.className = `mb-setting mb-setting-${type}`;
@@ -705,6 +756,9 @@ function makeH3SettingsPanel(widgets, node) {
       // makes a later switch to manual mode start from the displayed result,
       // rather than an old value from before the duration was changed.
       if (name !== "manual_frames") syncFrameMode(true);
+      // Width/height, megapixels, alignment and the second-pass values all
+      // affect the displayed final second-pass resolution.
+      refreshSecondPassControls();
       panel.querySelector(".mb-output-summary").textContent = summaryText();
     };
     field.append(caption, input); panel.appendChild(field);
@@ -716,7 +770,66 @@ function makeH3SettingsPanel(widgets, node) {
   createControl("multiple", "倍数", "number", { min: 8, max: 128, step: 4 });
   createControl("auto_calculate", "自动计算帧数", "checkbox");
   const manualInput = createControl("manual_frames", "手动帧数", "number", { min: 1, max: 10000, step: 1 });
-  createControl("second_pass_scale", "2采放大倍数", "number", { min: 1, max: 4, step: 0.1, decimals: 1 });
+  // The value field changes meaning with the compact mode selector. In
+  // direct-megapixel mode it is a true second-pass target, independent from
+  // the first-pass pixel size; in scale mode it remains fully compatible with
+  // the old 2nd-pass multiplier workflow.
+  const secondPassValueField = document.createElement("div"); secondPassValueField.className = "mb-setting";
+  const secondPassValueLabel = document.createElement("label");
+  const secondPassValueInput = document.createElement("input"); secondPassValueInput.type = "number";
+  secondPassValueField.append(secondPassValueLabel, secondPassValueInput); panel.appendChild(secondPassValueField);
+  const secondPassModeField = document.createElement("div"); secondPassModeField.className = "mb-setting";
+  const secondPassModeLabel = document.createElement("label"); secondPassModeLabel.textContent = "二采尺寸方式";
+  const secondPassModeInput = document.createElement("select");
+  [["倍率放大", "倍率放大"], ["百万原始", "百万原始"]].forEach(([value, text]) => secondPassModeInput.appendChild(new Option(text, value)));
+  secondPassModeField.append(secondPassModeLabel, secondPassModeInput); panel.appendChild(secondPassModeField);
+  const secondPassOutputField = document.createElement("div"); secondPassOutputField.className = "mb-setting";
+  const secondPassOutputLabel = document.createElement("label"); secondPassOutputLabel.textContent = "2采输出尺寸";
+  const secondPassOutputValue = document.createElement("div"); secondPassOutputValue.className = "mb-setting-output-value";
+  secondPassOutputField.append(secondPassOutputLabel, secondPassOutputValue); panel.appendChild(secondPassOutputField);
+  const secondPassSettings = () => h3Settings(
+    widgets.duration.value, widgets.aspect_ratio.value, widgets.megapixels.value, widgets.multiple.value,
+    widgets.second_pass_scale.value, widgets.auto_calculate.value, widgets.manual_frames.value,
+    widgets.second_pass_size_mode.value, widgets.second_pass_megapixels.value,
+  );
+  refreshSecondPassControls = () => {
+    const directMode = widgets.second_pass_size_mode.value === "百万原始";
+    const activeWidget = directMode ? widgets.second_pass_megapixels : widgets.second_pass_scale;
+    secondPassValueLabel.textContent = directMode ? "2采百万像素" : "2采放大倍数";
+    secondPassValueInput.min = directMode ? "0.1" : "1";
+    secondPassValueInput.max = directMode ? "16" : "4";
+    secondPassValueInput.step = directMode ? "0.01" : "0.1";
+    secondPassValueInput.value = Number(activeWidget.value || 1).toFixed(directMode ? 2 : 1);
+    secondPassModeInput.value = directMode ? "百万原始" : "倍率放大";
+    const settings = secondPassSettings();
+    secondPassOutputValue.textContent = `${settings.secondPassWidth} × ${settings.secondPassHeight}`;
+  };
+  const updateSecondPassValue = (commit = false) => {
+    const directMode = widgets.second_pass_size_mode.value === "百万原始";
+    const activeWidget = directMode ? widgets.second_pass_megapixels : widgets.second_pass_scale;
+    const minimum = directMode ? 0.1 : 1;
+    const maximum = directMode ? 16 : 4;
+    const decimals = directMode ? 2 : 1;
+    const typedValue = Number(secondPassValueInput.value);
+    if (!Number.isFinite(typedValue)) return;
+    const value = Number(Math.min(maximum, Math.max(minimum, typedValue)).toFixed(decimals));
+    activeWidget.value = value; activeWidget.callback?.(value);
+    // Do not rewrite the text while the user is typing (e.g. the temporary
+    // "1." in 1.3). The final change event normalizes it after editing.
+    if (commit) secondPassValueInput.value = value.toFixed(decimals);
+    node._h3SaveBackup?.(); node.graph?.setDirtyCanvas(true, true);
+    const settings = secondPassSettings();
+    secondPassOutputValue.textContent = `${settings.secondPassWidth} × ${settings.secondPassHeight}`;
+    panel.querySelector(".mb-output-summary").textContent = summaryText();
+  };
+  secondPassValueInput.oninput = () => updateSecondPassValue(false);
+  secondPassValueInput.onchange = () => updateSecondPassValue(true);
+  secondPassModeInput.onchange = () => {
+    const value = secondPassModeInput.value === "百万原始" ? "百万原始" : "倍率放大";
+    widgets.second_pass_size_mode.value = value; widgets.second_pass_size_mode.callback?.(value);
+    node._h3SaveBackup?.(); node.graph?.setDirtyCanvas(true, true); refreshSecondPassControls();
+    panel.querySelector(".mb-output-summary").textContent = summaryText();
+  };
   syncFrameMode = (copyCalculatedFrames = false) => {
     const automatic = Boolean(widgets.auto_calculate.value);
     if (automatic && copyCalculatedFrames) {
@@ -738,6 +851,7 @@ function makeH3SettingsPanel(widgets, node) {
   const summary = document.createElement("div"); summary.className = "mb-output-summary";
   summary.textContent = summaryText();
   panel.appendChild(summary);
+  refreshSecondPassControls();
   // Synchronize on first render too, so existing workflows with automatic
   // mode selected are repaired immediately after being opened.
   syncFrameMode(true);
@@ -752,6 +866,7 @@ function makeH3SettingsPanel(widgets, node) {
         input.value = decimals !== null && Number.isFinite(value) ? value.toFixed(decimals) : String(widget.value ?? "");
       }
     });
+    refreshSecondPassControls();
     syncFrameMode();
   };
   return panel;
@@ -1176,7 +1291,7 @@ function createBoard(node) {
   }
   const manifestWidget = node.widgets?.find((widget) => widget.name === "media_manifest");
   const promptWidget = node.widgets?.find((widget) => widget.name === "prompt");
-  const settingsWidgets = Object.fromEntries(["duration", "aspect_ratio", "megapixels", "multiple", "second_pass_scale", "auto_calculate", "manual_frames", "noise_seed", "noise_mode", "noise_after_generate"].map((name) => [name, node.widgets?.find((widget) => widget.name === name)]));
+  const settingsWidgets = Object.fromEntries(["duration", "aspect_ratio", "megapixels", "multiple", "second_pass_scale", "second_pass_size_mode", "second_pass_megapixels", "auto_calculate", "manual_frames", "noise_seed", "noise_mode", "noise_after_generate"].map((name) => [name, node.widgets?.find((widget) => widget.name === name)]));
   const retryWhenWidgetsReady = () => {
     const attempts = node._h3BoardInitAttempts || 0;
     if (attempts >= 8 || node._h3BoardInitScheduled) return;
@@ -1232,6 +1347,9 @@ function createBoard(node) {
     if (!Number.isFinite(frames) || frames < 1 || frames > 10000) settingsWidgets.manual_frames.value = 362;
     const scale = Number(settingsWidgets.second_pass_scale.value);
     if (!Number.isFinite(scale) || scale < 1 || scale > 4) settingsWidgets.second_pass_scale.value = 1.0;
+    if (settingsWidgets.second_pass_size_mode.value !== "百万原始") settingsWidgets.second_pass_size_mode.value = "倍率放大";
+    const secondMegapixels = Number(settingsWidgets.second_pass_megapixels.value);
+    if (!Number.isFinite(secondMegapixels) || secondMegapixels < 0.1 || secondMegapixels > 16) settingsWidgets.second_pass_megapixels.value = 1.0;
   };
   repairLegacySettings();
 
@@ -1978,7 +2096,8 @@ function decorateUnpacker(node) {
       valueOf("duration", 15), valueOf("aspect_ratio", "9:16"),
       valueOf("megapixels", 0.4), valueOf("multiple", 32),
       valueOf("second_pass_scale", 1), valueOf("auto_calculate", true),
-      valueOf("manual_frames", 362),
+      valueOf("manual_frames", 362), valueOf("second_pass_size_mode", "倍率放大"),
+      valueOf("second_pass_megapixels", 1),
     );
     node._h3MediaCounts = {
       image: state.image.filter(Boolean).length,
@@ -2813,6 +2932,394 @@ function createStableMultiLoraLoader(node) {
   };
 }
 
+// Workflow switchboard ----------------------------------------------------
+// This is a canvas-only controller: it lists only targets added by the user,
+// never all groups in the current workflow.
+const WORKFLOW_SWITCHBOARD_NODE = "H3WorkflowSwitchboard";
+const WORKFLOW_SWITCHBOARD_TARGETS = "h3_workflow_switchboard_targets";
+const WORKFLOW_SWITCHBOARD_ORIGINAL_MODES = "h3_workflow_switchboard_original_modes";
+const WORKFLOW_SWITCHBOARD_ORIGINAL_STYLE = "h3_workflow_switchboard_original_style";
+
+function isWorkflowSwitchboard(node) {
+  return node?.comfyClass === WORKFLOW_SWITCHBOARD_NODE || node?.type === WORKFLOW_SWITCHBOARD_NODE;
+}
+
+function workflowSwitchboardWidget(node) {
+  return node.widgets?.find((widget) => widget.name === "control_state");
+}
+
+function workflowNodes(graph) {
+  return Array.isArray(graph?._nodes) ? graph._nodes : [];
+}
+
+function workflowGroups(graph) {
+  return Array.isArray(graph?._groups) ? graph._groups : [];
+}
+
+function workflowGroupKey(group, index) {
+  if (group?.id !== undefined) return `group-id:${group.id}`;
+  if (group?._id !== undefined) return `group-id:${group._id}`;
+  const [x, y] = Array.isArray(group?.pos) ? group.pos : [0, 0];
+  return `group-pos:${index}:${Math.round(Number(x) || 0)}:${Math.round(Number(y) || 0)}`;
+}
+
+function workflowGroupTitle(group, index) {
+  return String(group?.title || group?.name || "").trim() || `未命名组 ${index + 1}`;
+}
+
+function workflowCandidates(controller) {
+  const groups = workflowGroups(controller.graph).map((group, index) => ({
+    key: workflowGroupKey(group, index), kind: "group", title: workflowGroupTitle(group, index),
+  }));
+  const nodes = workflowNodes(controller.graph)
+    .filter((node) => node !== controller && node.id !== controller.id)
+    .map((node) => ({
+      key: `node:${node.id}`, kind: "node", node_id: node.id,
+      title: String(node.title || node.comfyClass || node.type || "节点"),
+    }));
+  return [...groups, ...nodes];
+}
+
+function automaticWorkflowCandidates(controller) {
+  // `##` is an opt-in marker in the visible title. A title can belong to a
+  // normal node or to a LiteGraph group (the blue group strip in the canvas),
+  // so scan both. Ordinary single-# ID badges are not auto-added.
+  return workflowCandidates(controller).filter((candidate) => String(candidate.title || "").trim().startsWith("##"));
+}
+
+function readWorkflowTargets(controller) {
+  const widget = workflowSwitchboardWidget(controller);
+  for (const raw of [widget?.value, controller.properties?.[WORKFLOW_SWITCHBOARD_TARGETS]]) {
+    try {
+      const targets = JSON.parse(String(raw || "[]"));
+      if (Array.isArray(targets)) return targets
+        .filter((target) => target && (target.kind === "group" || target.kind === "node"))
+        .map((target) => ({ ...target, enabled: target.enabled !== false }));
+    } catch { /* Try the property backup while an old workflow is restoring. */ }
+  }
+  return [];
+}
+
+function addAutomaticWorkflowTargets(controller, targets = readWorkflowTargets(controller)) {
+  const known = new Set(targets.map((target) => target.key));
+  const additions = automaticWorkflowCandidates(controller)
+    .filter((candidate) => !known.has(candidate.key))
+    .map((candidate) => ({ ...candidate, enabled: true, automatic: true }));
+  if (!additions.length) return targets;
+  const next = [...targets, ...additions];
+  writeWorkflowTargets(controller, next);
+  return next;
+}
+
+function setWorkflowNodeMode(node, mode) {
+  // This is exactly ComfyUI's Ctrl+B bypass state (mode 4). Keep the node
+  // visible on the canvas and preserve its wires; only execution is skipped.
+  node.mode = mode;
+}
+
+function resolveWorkflowGroup(controller, target) {
+  const groups = workflowGroups(controller.graph);
+  return groups.find((group, index) => workflowGroupKey(group, index) === target.key)
+    || groups.find((group, index) => workflowGroupTitle(group, index) === target.title)
+    || null;
+}
+
+function nodesInsideWorkflowGroup(graph, group, controller) {
+  const all = workflowNodes(graph).filter((node) => node !== controller);
+  // Recent LiteGraph groups populate `_children` only after this call. Older
+  // builds used `_nodes`, so support both before falling back to bounds.
+  group?.recomputeInsideNodes?.();
+  if (Array.isArray(group?._children) && group._children.length) return group._children.filter((node) => all.includes(node));
+  if (Array.isArray(group?._nodes) && group._nodes.length) return group._nodes.filter((node) => all.includes(node));
+  const [left, top] = Array.isArray(group?.pos) ? group.pos : [0, 0];
+  const [width, height] = Array.isArray(group?.size) ? group.size : [0, 0];
+  return all.filter((node) => {
+    const [x, y] = Array.isArray(node.pos) ? node.pos : [Infinity, Infinity];
+    const [nodeWidth, nodeHeight] = Array.isArray(node.size) ? node.size : [0, 0];
+    const centerX = Number(x) + Number(nodeWidth) / 2;
+    const centerY = Number(y) + Number(nodeHeight) / 2;
+    return centerX >= Number(left) && centerX <= Number(left) + Number(width)
+      && centerY >= Number(top) && centerY <= Number(top) + Number(height);
+  });
+}
+
+function nodesForWorkflowTarget(controller, target) {
+  if (target.kind === "node") {
+    return workflowNodes(controller.graph).filter((node) => node !== controller && String(node.id) === String(target.node_id));
+  }
+  const group = resolveWorkflowGroup(controller, target);
+  return group ? nodesInsideWorkflowGroup(controller.graph, group, controller) : [];
+}
+
+function isWorkflowTargetBypassed(controller, target) {
+  const nodes = nodesForWorkflowTarget(controller, target);
+  // Groups read as bypassed only when every member was Ctrl+B'd.
+  return nodes.length > 0 && nodes.every((node) => Number(node.mode) === 4);
+}
+
+function syncWorkflowTargetsFromCanvas(controller, targets = readWorkflowTargets(controller)) {
+  let changed = false;
+  const next = targets.map((target) => {
+    const enabled = !isWorkflowTargetBypassed(controller, target);
+    if (enabled === (target.enabled !== false)) return target;
+    changed = true;
+    return { ...target, enabled };
+  });
+  if (!changed) return { targets, changed: false };
+  // Persist only the observed state. Applying here would undo the user's
+  // just-pressed Ctrl+B before the switch has a chance to reflect it.
+  const encoded = JSON.stringify(next);
+  controller.properties ??= {};
+  controller.properties[WORKFLOW_SWITCHBOARD_TARGETS] = next;
+  const widget = workflowSwitchboardWidget(controller);
+  if (widget) {
+    widget.value = encoded;
+    if (widget._state) widget._state.value = encoded;
+  }
+  controller.graph?.setDirtyCanvas?.(true, true);
+  return { targets: next, changed: true };
+}
+
+function restoreWorkflowSwitchboardModes(controller) {
+  const saved = controller.properties?.[WORKFLOW_SWITCHBOARD_ORIGINAL_MODES] || {};
+  workflowNodes(controller.graph).forEach((node) => {
+    const mode = saved[String(node.id)];
+    if (node !== controller && Number.isFinite(Number(mode))) setWorkflowNodeMode(node, Number(mode));
+  });
+}
+
+function applyWorkflowSwitchboard(controller, targets = readWorkflowTargets(controller)) {
+  if (!controller?.graph) return;
+  controller.properties ??= {};
+  const saved = controller.properties[WORKFLOW_SWITCHBOARD_ORIGINAL_MODES] ??= {};
+  // Reset first, then apply rows in their visual order. Therefore a dragged
+  // node row can deliberately override the setting of its parent group.
+  restoreWorkflowSwitchboardModes(controller);
+  for (const target of targets) {
+    if (target.enabled !== false) continue;
+    nodesForWorkflowTarget(controller, target).forEach((node) => {
+      const id = String(node.id);
+      if (!Object.prototype.hasOwnProperty.call(saved, id)) saved[id] = Number(node.mode) || 0;
+      // Mode 4 is ComfyUI's bypass mode: it keeps existing wires intact.
+      setWorkflowNodeMode(node, 4);
+    });
+  }
+  controller.graph?.setDirtyCanvas?.(true, true);
+}
+
+function writeWorkflowTargets(controller, targets) {
+  const value = targets.map((target) => ({ ...target, enabled: target.enabled !== false }));
+  const encoded = JSON.stringify(value);
+  controller.properties ??= {};
+  controller.properties[WORKFLOW_SWITCHBOARD_TARGETS] = value;
+  const widget = workflowSwitchboardWidget(controller);
+  if (widget) {
+    widget.value = encoded;
+    if (widget._state) widget._state.value = encoded;
+    widget.callback?.(encoded);
+  }
+  applyWorkflowSwitchboard(controller, value);
+  controller.graph?.setDirtyCanvas?.(true, true);
+}
+
+function createWorkflowSwitchboard(controller) {
+  if (controller._workflowSwitchboardReady) { controller._workflowSwitchboardRender?.(); return; }
+  injectWorkflowSwitchboardStyle();
+  const stateWidget = workflowSwitchboardWidget(controller);
+  if (!stateWidget) {
+    const attempt = controller._workflowSwitchboardAttempts || 0;
+    if (attempt < 8 && !controller._workflowSwitchboardPending) {
+      controller._workflowSwitchboardAttempts = attempt + 1;
+      controller._workflowSwitchboardPending = true;
+      setTimeout(() => { controller._workflowSwitchboardPending = false; createWorkflowSwitchboard(controller); }, 80 * (attempt + 1));
+    }
+    return;
+  }
+  controller._workflowSwitchboardReady = true;
+  stateWidget.hidden = true; stateWidget.options ??= {}; stateWidget.options.hidden = true;
+  stateWidget.serialize = true; stateWidget.serializeValue = () => stateWidget.value;
+  stateWidget.computeSize = () => [0, -4]; stateWidget.draw = () => {};
+  if (stateWidget.element) stateWidget.element.style.display = "none";
+
+  const root = document.createElement("div"); root.className = "h3-workflow-switchboard";
+  root.onpointerdown = (event) => event.stopPropagation();
+  const head = document.createElement("div"); head.className = "h3-ws-head";
+  const headTitle = document.createElement("span"); headTitle.className = "h3-ws-title"; headTitle.textContent = "流程开关控制器";
+  const headHint = document.createElement("span"); headHint.className = "h3-ws-hint"; headHint.textContent = "只添加需要控制的组 / # 节点";
+  const sizePicker = document.createElement("select"); sizePicker.className = "h3-ws-size"; sizePicker.title = "调整控制器整体大小";
+  const sizeOptions = [["0.8", "小"], ["0.9", "中小"], ["1", "中"], ["1.15", "中大"], ["1.3", "大"], ["1.5", "极大"]];
+  sizeOptions.forEach(([value, label]) => sizePicker.appendChild(new Option(label, value)));
+  head.append(headTitle, headHint, sizePicker);
+  const addBar = document.createElement("div"); addBar.className = "h3-ws-add";
+  const picker = document.createElement("select"); picker.title = "选择要添加的组或 # 编号节点";
+  const add = document.createElement("button"); add.textContent = "添加";
+  const refresh = document.createElement("button"); refresh.className = "h3-ws-refresh"; refresh.textContent = "刷新";
+  addBar.append(picker, add, refresh);
+  const list = document.createElement("div"); list.className = "h3-ws-list";
+  const status = document.createElement("div"); status.className = "h3-ws-status";
+  root.append(head, addBar, list, status);
+
+  controller.properties ??= {};
+  const initialScale = Number(controller.properties.h3_workflow_switchboard_scale);
+  const scaleForNode = () => sizeOptions.some(([value]) => Number(value) === initialScale)
+    ? initialScale : Number(controller.properties.h3_workflow_switchboard_scale) || 1;
+  controller.properties.h3_workflow_switchboard_scale = Math.min(1.5, Math.max(0.8, scaleForNode()));
+  controller.properties.h3_workflow_switchboard_base_width ??= Math.max(440, (Number(controller.size?.[0]) || 440) / controller.properties.h3_workflow_switchboard_scale);
+  const applyScale = () => {
+    const scale = Number(controller.properties.h3_workflow_switchboard_scale) || 1;
+    root.style.zoom = String(scale);
+    sizePicker.value = String(scale);
+  };
+  const intrinsicContentHeight = () => {
+    // addDOMWidget may stretch its root to the canvas node's current height.
+    // Never measure root.scrollHeight here: that creates a feedback loop where
+    // every resize is treated as new content and makes the node taller again.
+    const children = [...root.children];
+    const styles = getComputedStyle(root);
+    const gap = Number.parseFloat(styles.rowGap || styles.gap) || 0;
+    const padding = (Number.parseFloat(styles.paddingTop) || 0) + (Number.parseFloat(styles.paddingBottom) || 0);
+    return Math.ceil(padding + children.reduce((total, child) => total + child.offsetHeight, 0) + Math.max(0, children.length - 1) * gap);
+  };
+  const syncSize = () => {
+    // DOM widgets can finish laying out one or two frames after they are
+    // created. Measure their final scroll height and reserve extra canvas
+    // chrome, so status text and the last switch row never paint outside the
+    // blue node boundary.
+    requestAnimationFrame(() => {
+      const scale = Number(controller.properties.h3_workflow_switchboard_scale) || 1;
+      const baseWidth = Math.max(440, Number(controller.properties.h3_workflow_switchboard_base_width) || 440);
+      const width = Math.ceil(baseWidth * scale);
+      const contentHeight = intrinsicContentHeight();
+      const height = Math.max(230, Math.ceil(contentHeight * scale) + 120);
+      const currentWidth = Number(controller.size?.[0]) || 0;
+      const currentHeight = Number(controller.size?.[1]) || 0;
+      controller.min_size = [Math.ceil(440 * scale), 230];
+      if (Math.abs(currentWidth - width) > 1 || Math.abs(currentHeight - height) > 1) {
+        controller.setSize?.([width, height]);
+        controller.graph?.setDirtyCanvas?.(true, true);
+      }
+    });
+  };
+  applyScale();
+  const render = () => {
+    const targets = syncWorkflowTargetsFromCanvas(controller, addAutomaticWorkflowTargets(controller)).targets;
+    const allCandidates = workflowCandidates(controller);
+    const used = new Set(targets.map((target) => target.key));
+    const available = allCandidates.filter((candidate) => !used.has(candidate.key));
+    picker.replaceChildren();
+    if (!available.length) {
+      const option = new Option("没有可添加的组或节点", ""); picker.appendChild(option); add.disabled = true;
+    } else {
+      available.forEach((candidate) => picker.appendChild(new Option(
+        candidate.kind === "group" ? `组 · ${candidate.title}` : `#${candidate.node_id} · ${candidate.title}`,
+        candidate.key,
+      )));
+      add.disabled = false;
+    }
+    list.replaceChildren();
+    if (!targets.length) {
+      const empty = document.createElement("div"); empty.className = "h3-ws-empty";
+      empty.textContent = "标题以 ## 开头的节点会自动加入；也可从上方手动添加。"; list.appendChild(empty);
+    }
+    targets.forEach((target, index) => {
+      const row = document.createElement("div"); row.className = "h3-ws-row";
+      const grip = document.createElement("span"); grip.className = "h3-ws-grip"; grip.textContent = "⠿"; grip.title = "拖拽排序";
+      const label = document.createElement("span"); label.className = "h3-ws-label";
+      label.textContent = target.kind === "group" ? `组 · ${target.title || "未命名组"}` : `#${target.node_id} · ${target.title || "未命名节点"}`;
+      const extra = document.createElement("small");
+      extra.textContent = target.kind === "group" ? `${nodesForWorkflowTarget(controller, target).length} 个节点` : "节点";
+      label.appendChild(extra);
+      const toggle = document.createElement("button");
+      const enabled = target.enabled !== false;
+      toggle.className = `h3-ws-toggle${enabled ? " enabled" : ""}`;
+      toggle.title = enabled ? "当前启用；点击绕过" : "当前绕过；点击启用";
+      const remove = document.createElement("button"); remove.className = "h3-ws-remove"; remove.textContent = "×"; remove.title = "移除控制项";
+      toggle.onclick = (event) => { event.stopPropagation(); const next = readWorkflowTargets(controller); next[index].enabled = !next[index].enabled; writeWorkflowTargets(controller, next); render(); };
+      remove.onclick = (event) => { event.stopPropagation(); const next = readWorkflowTargets(controller); next.splice(index, 1); writeWorkflowTargets(controller, next); render(); };
+      // Pointer-based sorting works inside ComfyUI's DOM widget on Chromium
+      // and touch screens; native HTML drag events are swallowed by some
+      // canvas versions before they reach the row.
+      grip.onpointerdown = (event) => {
+        if (event.button !== 0) return;
+        event.preventDefault(); event.stopPropagation();
+        const drag = { pointerId: event.pointerId, from: index, to: index };
+        controller._workflowSwitchboardDrag = drag;
+        row.classList.add("dragging"); grip.setPointerCapture?.(event.pointerId);
+        const clearTargets = () => list.querySelectorAll(".h3-ws-row.drop-target").forEach((item) => item.classList.remove("drop-target"));
+        const findDestination = (clientY) => {
+          const rows = [...list.querySelectorAll(".h3-ws-row")];
+          const found = rows.findIndex((item) => {
+            const bounds = item.getBoundingClientRect();
+            return clientY < bounds.top + bounds.height / 2;
+          });
+          return found < 0 ? rows.length - 1 : found;
+        };
+        const move = (pointerEvent) => {
+          if (pointerEvent.pointerId !== drag.pointerId) return;
+          pointerEvent.preventDefault();
+          drag.to = findDestination(pointerEvent.clientY);
+          clearTargets();
+          list.querySelectorAll(".h3-ws-row")[drag.to]?.classList.add("drop-target");
+        };
+        const finish = (pointerEvent) => {
+          if (pointerEvent.pointerId !== drag.pointerId) return;
+          document.removeEventListener("pointermove", move, true);
+          document.removeEventListener("pointerup", finish, true);
+          document.removeEventListener("pointercancel", finish, true);
+          grip.releasePointerCapture?.(drag.pointerId); clearTargets(); row.classList.remove("dragging");
+          controller._workflowSwitchboardDrag = null;
+          if (drag.to !== drag.from) {
+            const next = readWorkflowTargets(controller); const [moved] = next.splice(drag.from, 1); next.splice(drag.to, 0, moved);
+            writeWorkflowTargets(controller, next); render();
+          }
+        };
+        document.addEventListener("pointermove", move, true);
+        document.addEventListener("pointerup", finish, true);
+        document.addEventListener("pointercancel", finish, true);
+      };
+      row.append(grip, label, toggle, remove); list.appendChild(row);
+    });
+    status.textContent = targets.length ? `已控制 ${targets.length} 项；关闭项目按列表顺序绕过。` : "列表为空，不会改变画布中的任何节点。";
+    requestAnimationFrame(syncSize);
+  };
+  sizePicker.onchange = (event) => {
+    event.stopPropagation();
+    const scale = Number(sizePicker.value);
+    controller.properties.h3_workflow_switchboard_scale = Number.isFinite(scale) ? scale : 1;
+    applyScale(); syncSize(); controller.graph?.setDirtyCanvas?.(true, true);
+  };
+  add.onclick = (event) => {
+    event.stopPropagation(); const candidate = workflowCandidates(controller).find((item) => item.key === picker.value); if (!candidate) return;
+    const targets = readWorkflowTargets(controller);
+    if (!targets.some((target) => target.key === candidate.key)) { targets.push({ ...candidate, enabled: true }); writeWorkflowTargets(controller, targets); }
+    render();
+  };
+  refresh.onclick = (event) => { event.stopPropagation(); render(); };
+  controller.addDOMWidget("h3_workflow_switchboard_ui", "H3_WORKFLOW_SWITCHBOARD_UI", root, {
+    getValue: () => stateWidget.value, getMinHeight: () => 124, getHeight: () => Math.max(124, intrinsicContentHeight()),
+  });
+  const resizeObserver = new ResizeObserver(() => syncSize());
+  resizeObserver.observe(root);
+  controller._workflowSwitchboardRender = render;
+  const priorDraw = controller.onDrawForeground;
+  controller.onDrawForeground = function (ctx) {
+    priorDraw?.call(this, ctx);
+    // New nodes can be added after this controller. Polling at a low rate from
+    // the canvas draw keeps ## nodes automatic without replacing graph hooks.
+    const now = Date.now();
+    if (now - Number(controller._workflowSwitchboardLastScan || 0) < 700) return;
+    controller._workflowSwitchboardLastScan = now;
+    const current = readWorkflowTargets(controller);
+    const known = new Set(current.map((target) => target.key));
+    const hasNewAutomaticTarget = automaticWorkflowCandidates(controller).some((candidate) => !known.has(candidate.key));
+    const reflected = syncWorkflowTargetsFromCanvas(controller, current);
+    if (hasNewAutomaticTarget || reflected.changed) render();
+  };
+  const priorRemoved = controller.onRemoved;
+  controller.onRemoved = function (...args) { resizeObserver.disconnect(); restoreWorkflowSwitchboardModes(controller); controller.graph?.setDirtyCanvas?.(true, true); priorRemoved?.apply(this, args); };
+  requestAnimationFrame(() => { applyWorkflowSwitchboard(controller); render(); });
+}
+
 app.registerExtension({
   name: "h3.media_board",
   setup() {
@@ -2848,6 +3355,9 @@ app.registerExtension({
     if (node.comfyClass === "H3VideoModeControl") decorateVideoModeControl(node);
     if (node.comfyClass === "H3SecondPassPreparation") decorateSecondPassPreparation(node);
     if (node.comfyClass === "H3MultiTimeGuide") decorateMultiTimeGuide(node);
+    if (isWorkflowSwitchboard(node)) {
+      requestAnimationFrame(() => createWorkflowSwitchboard(node));
+    }
     if (isStableMultiLoraNode(node)) {
       requestAnimationFrame(() => createStableMultiLoraLoader(node));
     }
@@ -2858,6 +3368,9 @@ app.registerExtension({
     }
     if (isStableMultiLoraNode(node)) {
       requestAnimationFrame(() => createStableMultiLoraLoader(node));
+    }
+    if (isWorkflowSwitchboard(node)) {
+      requestAnimationFrame(() => createWorkflowSwitchboard(node));
     }
     if (node.comfyClass === "H3MediaBoard") {
       requestAnimationFrame(() => restoreBoardWorkflowState(node));
