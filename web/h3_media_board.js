@@ -1010,44 +1010,46 @@ function makePromptEditor(promptWidget, node, getState, saveBackup, onPromptChan
     referencePreview.style.left = `${left}px`; referencePreview.style.top = `${top}px`;
   };
   let referenceHideTimer = null;
-  let previewCtrlHeld = false;
+  let previewPinned = false;
   const setPreviewInteractive = (active) => {
-    previewCtrlHeld = Boolean(active);
-    referencePreview.classList.toggle("interactive", previewCtrlHeld);
+    referencePreview.classList.toggle("interactive", Boolean(active));
   };
   const cancelReferencePreviewHide = () => { if (referenceHideTimer) clearTimeout(referenceHideTimer); referenceHideTimer = null; };
   const hideReferencePreview = () => {
-    cancelReferencePreviewHide(); referencePreview.hidden = true;
+    cancelReferencePreviewHide(); previewPinned = false; referencePreview.hidden = true;
     referencePreview.classList.remove("interactive"); referencePreview.replaceChildren();
   };
-  const scheduleReferencePreviewHide = () => {
+  const scheduleReferencePreviewHide = (delay = previewPinned ? 650 : 180) => {
     cancelReferencePreviewHide();
-    referenceHideTimer = setTimeout(() => { if (!referencePreview.matches(":hover")) hideReferencePreview(); }, 180);
+    referenceHideTimer = setTimeout(() => { if (!referencePreview.matches(":hover")) hideReferencePreview(); }, delay);
   };
   const previewKeyChange = (event) => {
     if (referencePreview.hidden) return;
-    // Ctrl turns the hover card into a fixed, interactive player.  Releasing
-    // Ctrl is an explicit exit gesture, so the card disappears immediately.
-    if (event.type === "keyup" && !event.ctrlKey) { hideReferencePreview(); return; }
-    setPreviewInteractive(event.ctrlKey);
+    // Ctrl pins the hover card and enables its native audio/video controls.
+    // Releasing Ctrl must not remove an actively playing media element.
+    if (event.type === "keydown" && event.ctrlKey) {
+      previewPinned = true;
+      cancelReferencePreviewHide();
+      setPreviewInteractive(true);
+    }
   };
   document.addEventListener("keydown", previewKeyChange, true);
   document.addEventListener("keyup", previewKeyChange, true);
   referencePreview.onpointerenter = cancelReferencePreviewHide;
-  referencePreview.onpointerleave = scheduleReferencePreviewHide;
+  referencePreview.onpointerleave = () => { previewPinned = false; scheduleReferencePreviewHide(180); };
   const showReferencePreview = (type, index, event) => {
     const reference = referenceAsset(type, index);
     if (!reference?.asset) { hideReferencePreview(); return; }
-    cancelReferencePreviewHide(); setPreviewInteractive(event.ctrlKey);
+    cancelReferencePreviewHide(); previewPinned = Boolean(event.ctrlKey); setPreviewInteractive(previewPinned);
     const title = document.createElement("span"); title.className = "mb-reference-preview-title";
-    title.textContent = `<${type} ${index}> · ${reference.asset.name || "已上传素材"}${reference.kind === "image" ? "" : "（按住 Ctrl 可播放）"}`;
+    title.textContent = `<${type} ${index}> · ${reference.asset.name || "已上传素材"}${reference.kind === "image" ? "" : "（按 Ctrl 固定后可播放）"}`;
     referencePreview.replaceChildren(title);
     if (reference.kind === "image") {
       const image = new Image(); image.src = viewUrl(reference.asset.path); image.alt = title.textContent; referencePreview.appendChild(image);
     } else if (reference.kind === "audio") {
       const audio = document.createElement("audio"); audio.controls = true; audio.preload = "metadata"; audio.src = viewUrl(reference.asset.path); referencePreview.appendChild(audio);
     } else {
-      const video = document.createElement("video"); video.controls = true; video.muted = true; video.preload = "metadata"; video.src = viewUrl(reference.asset.path); referencePreview.appendChild(video);
+      const video = document.createElement("video"); video.controls = true; video.playsInline = true; video.preload = "metadata"; video.src = viewUrl(reference.asset.path); referencePreview.appendChild(video);
     }
     referencePreview.hidden = false; placeReferencePreview(event);
   };
@@ -1188,7 +1190,7 @@ function makePromptEditor(promptWidget, node, getState, saveBackup, onPromptChan
         const reference = document.createElement("span");
         reference.className = "mb-media-ref"; reference.textContent = match[0];
         reference.onpointerenter = (event) => showReferencePreview(referenceType, referenceIndex, event);
-        reference.onpointermove = (event) => { if (!event.ctrlKey) placeReferencePreview(event); };
+        reference.onpointermove = (event) => { if (!previewPinned && !event.ctrlKey) placeReferencePreview(event); };
         reference.onpointerleave = scheduleReferencePreviewHide;
         fragment.appendChild(reference);
       } else fragment.appendChild(document.createTextNode(match[0]));
