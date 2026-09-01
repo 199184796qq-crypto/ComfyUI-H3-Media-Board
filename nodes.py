@@ -45,24 +45,13 @@ def _prompt_h3_overrides(prompt: str | None) -> dict[str, float | str]:
     text = str(prompt or "").replace("：", ":")
     result: dict[str, float | str] = {}
 
-    # Check explicit numeric ratios before descriptive words. Boundaries avoid
+    # Only an explicit numeric ratio can override the menu. Boundaries avoid
     # mistaking timestamps such as 00:03 for a requested output ratio.
     for ratio in sorted(ASPECT_RATIOS, key=len, reverse=True):
         pattern = ratio.replace(":", r"\s*:\s*")
         if re.search(rf"(?<!\d){pattern}(?!\d)", text):
             result["aspect_ratio"] = ratio
             break
-    else:
-        lowered = text.lower()
-        if re.search(r"(?:\bportrait\b|\bvertical\b|竖屏|竖版)", lowered):
-            result["aspect_ratio"] = "9:16"
-        elif re.search(r"(?:\bultra[ -]?wide\b|\bwidescreen\b|超宽屏)", lowered):
-            result["aspect_ratio"] = "21:9"
-        elif re.search(r"(?:\blandscape\b|\bhorizontal\b|横屏|横版)", lowered):
-            result["aspect_ratio"] = "16:9"
-        elif re.search(r"(?:\bsquare\b|方形|正方形)", lowered):
-            result["aspect_ratio"] = "1:1"
-
     duration_patterns = (
         r"(?:\bduration\b|\b(?:target\s+)?video(?:\s+(?:duration|length))?\b|\blength\b|时长|视频长度)\s*(?:is|为|:)?\s*(\d+(?:\.\d+)?)",
         r"(?:^|[^\d:])(\d+(?:\.\d+)?)\s*(?:-|–|—)?\s*(?:seconds?|secs?|秒)\b",
@@ -495,6 +484,9 @@ class H3MediaBoard:
                 "second_pass_scale": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 4.0, "step": 0.1}),
                 "second_pass_size_mode": (["倍率放大", "百万原始"], {"default": "倍率放大"}),
                 "second_pass_megapixels": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 16.0, "step": 0.01}),
+                # Append new UI fields so older workflows keep their fixed
+                # widget positions.
+                "video_name": ("STRING", {"default": "ComfyUI_", "multiline": False}),
             },
             # A separate forced input guarantees a visible socket in both the
             # legacy canvas and Nodes 2.0.  The local textarea remains usable
@@ -503,8 +495,8 @@ class H3MediaBoard:
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
-    RETURN_TYPES = ("H3_MEDIA_BOARD", "NOISE", "FLOAT")
-    RETURN_NAMES = ("media_board", "noise", "2采放大倍数")
+    RETURN_TYPES = ("H3_MEDIA_BOARD", "NOISE", "FLOAT", "STRING")
+    RETURN_NAMES = ("media_board", "noise", "2采放大倍数", "视频名称")
     FUNCTION = "collect"
     CATEGORY = "H3 / Media"
 
@@ -518,7 +510,7 @@ class H3MediaBoard:
                 noise_seed: int, noise_mode: str, external_prompt: str | None = None,
                 unique_id: str | None = None, noise_after_generate: str = "randomize",
                 second_pass_scale: float = 1.0, second_pass_size_mode: str = "倍率放大",
-                second_pass_megapixels: float = 1.0):
+                second_pass_megapixels: float = 1.0, video_name: str = "ComfyUI_"):
         manifest = _clean_manifest(media_manifest)
         effective_prompt = external_prompt if external_prompt is not None else prompt
         manifest["prompt"] = effective_prompt
@@ -535,17 +527,26 @@ class H3MediaBoard:
             "seed": int(noise_seed), "mode": noise_mode, "after_generate": noise_after_generate,
             "effective_seed": effective_seed,
         }
+        # Keep the raw prefix exactly as entered; save-video nodes can append
+        # their own counter/extension. Empty input falls back to the familiar
+        # ComfyUI_ prefix instead of producing an unnamed file.
+        resolved_video_name = str(video_name or "ComfyUI_")
+        settings["video_name"] = resolved_video_name
+        manifest["video_name"] = resolved_video_name
         manifest["settings"] = settings
         # UI payload must remain JSON serializable; the executable noise object
         # travels only through the in-memory board output to the unpack node.
         runtime_manifest = dict(manifest)
         noise = _H3SeedNoise(effective_seed)
         runtime_manifest["_noise_object"] = noise
-        # Keep the existing outputs at indexes 0 and 1 so saved workflows stay
-        # connected; append the second-pass scale as a direct FLOAT output.
+        # Keep all existing output indexes stable. The direct-megapixel field
+        # remains display-only. The appended string is a shared save-name
+        # prefix and can be fanned out to any number of save-video nodes.
         return {
             "ui": {"h3_media_board": [manifest]},
-            "result": (runtime_manifest, noise, float(settings["second_pass_effective_scale"])),
+            "result": (
+                runtime_manifest, noise, float(settings["second_pass_scale"]), resolved_video_name,
+            ),
         }
 
 
@@ -603,7 +604,7 @@ class H3MediaBoardUnpack:
             noise = _H3SeedNoise(int(noise_settings.get("effective_seed", noise_settings.get("seed", 0))))
         return tuple(images + videos + video_audios + audios + [
             str(media_board.get("prompt", "")), params["duration"], params["width"], params["height"], params["frames"], noise,
-            float(params["second_pass_effective_scale"]),
+            float(params["second_pass_scale"]),
         ])
 
 

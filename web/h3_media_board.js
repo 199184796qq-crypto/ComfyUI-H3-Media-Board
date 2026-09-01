@@ -129,6 +129,23 @@ function h3Settings(duration, aspectRatio, megapixels, multiple, secondPassScale
   return { duration: seconds, aspectRatio, megapixels: mp, multiple: align, secondPassScale: scaleFactor, secondPassSizeMode: directMode ? "百万原始" : "倍率放大", secondPassMegapixels: directMegapixels, secondPassWidth, secondPassHeight, autoCalculate: automatic, manualFrames: Math.max(1, Math.round(Number(manualFrames) || 1)), width, height, frames: automatic ? calculatedFrames : Math.max(1, Math.round(Number(manualFrames) || 1)) };
 }
 
+const H3_SECOND_PASS_SIZE_MODE_STORAGE_KEY = "h3_media_board.second_pass_size_mode";
+const H3_SECOND_PASS_SIZE_MODES = new Set(["倍率放大", "百万原始"]);
+
+function readRememberedSecondPassSizeMode() {
+  try {
+    const value = localStorage.getItem(H3_SECOND_PASS_SIZE_MODE_STORAGE_KEY);
+    return H3_SECOND_PASS_SIZE_MODES.has(value) ? value : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function rememberSecondPassSizeMode(value) {
+  if (!H3_SECOND_PASS_SIZE_MODES.has(value)) return;
+  try { localStorage.setItem(H3_SECOND_PASS_SIZE_MODE_STORAGE_KEY, value); } catch (_) { /* storage unavailable */ }
+}
+
 function promptH3Overrides(prompt) {
   const text = String(prompt || "").replaceAll("：", ":");
   const result = {};
@@ -138,12 +155,6 @@ function promptH3Overrides(prompt) {
       result.aspect_ratio = ratio;
       break;
     }
-  }
-  if (!result.aspect_ratio) {
-    if (/(?:\bportrait\b|\bvertical\b|竖屏|竖版)/i.test(text)) result.aspect_ratio = "9:16";
-    else if (/(?:\bultra[ -]?wide\b|\bwidescreen\b|超宽屏)/i.test(text)) result.aspect_ratio = "21:9";
-    else if (/(?:\blandscape\b|\bhorizontal\b|横屏|横版)/i.test(text)) result.aspect_ratio = "16:9";
-    else if (/(?:\bsquare\b|方形|正方形)/i.test(text)) result.aspect_ratio = "1:1";
   }
   const durationPatterns = [
     /(?:\bduration\b|\b(?:target\s+)?video(?:\s+(?:duration|length))?\b|\blength\b|时长|视频长度)\s*(?:is|为|:)?\s*(\d+(?:\.\d+)?)/i,
@@ -322,6 +333,9 @@ function injectStyle() {
     .h3-media-board .mb-setting label { overflow:hidden; color:#c4d0d6; font-size:12px; font-weight:750; letter-spacing:.1px; text-overflow:ellipsis; white-space:nowrap; }
     .h3-media-board .mb-setting input, .h3-media-board .mb-setting select { box-sizing:border-box; min-width:0; width:100%; height:29px; padding:4px 8px; color:#edf2f5; background:#0f1518; border:1px solid #50636d; border-radius:5px; outline:none; font:12px system-ui, sans-serif; }
     .h3-media-board .mb-setting input:focus, .h3-media-board .mb-setting select:focus { border-color:#78d7e3; box-shadow:0 0 0 2px #78d7e322; }
+    .h3-media-board .mb-setting.prompt-aspect-locked { border-color:#3c7782; background:linear-gradient(90deg,#173038 0%,#142126 58%); }
+    .h3-media-board .mb-setting.prompt-aspect-locked label { color:#83e9f4; }
+    .h3-media-board .mb-setting select:disabled { cursor:not-allowed; color:#8eeaf4; border-color:#39727c; background:#102126; opacity:1; }
     .h3-media-board .mb-setting-checkbox { display:flex; align-items:center; justify-content:space-between; padding:3px 11px; height:auto; background:linear-gradient(90deg,#1d2b2d 0%,#151d1f 58%); }
     .h3-media-board .mb-setting-checkbox label { color:#d4e0e3; font-size:12px; }
     .h3-media-board .mb-setting input[type="checkbox"] { width:auto; height:auto; padding:0; accent-color:#69ee7a; transform:scale(1.18); }
@@ -346,6 +360,7 @@ function injectStyle() {
     .h3-media-board .mb-noise-status { grid-column:1 / -1; justify-self:start; width:fit-content; max-width:100%; padding:6px 8px; border-left:3px solid #b998ff; border-radius:4px; color:#d8ccff; background:#211d30; font-size:11px; }
     .h3-media-board .mb-prompt-shell { position:relative; display:flex; flex:1 1 auto; flex-direction:column; min-height:145px; margin:9px 0 4px; overflow:hidden; }
     .h3-media-board .mb-prompt-actions { display:flex; align-items:center; justify-content:flex-start; gap:6px; margin:0 2px 6px; }
+    .h3-media-board .mb-prompt-help { flex:1 1 auto; min-width:0; overflow:hidden; color:#98bac2; font:10px system-ui,sans-serif; text-overflow:ellipsis; white-space:nowrap; }
     .h3-media-board .mb-prompt-action { height:25px; padding:0 10px; border:1px solid #4c626a; border-radius:5px; color:#dcebf0; background:#1b292f; cursor:pointer; font:700 11px system-ui, sans-serif; transition:background .16s ease,border-color .16s ease,color .16s ease; }
     .h3-media-board .mb-prompt-action:hover { border-color:#78d7e3; color:#f5fcff; background:#25434d; }
     .h3-media-board .mb-prompt-action-clear { color:#ffc6c8; border-color:#734d53; background:#352127; }
@@ -360,6 +375,7 @@ function injectStyle() {
     .h3-media-board .mb-height-resize-handle:hover .mb-height-resize-grip i, .h3-media-board .mb-height-resize-handle.dragging .mb-height-resize-grip i { background:#a5eff5; }
     .h3-media-board .mb-media-ref { color:#ff626b; font-weight:800; text-shadow:0 0 8px #ff4e5a55; cursor:help; }
     .h3-media-board .mb-dialogue { color:#ffd45d; font-weight:700; text-shadow:0 0 8px #ffcc4550; }
+    .h3-media-board .mb-aspect-ratio { color:#69e9f5; font-weight:800; text-shadow:0 0 8px #42dbe966; }
     .h3-media-board .mb-at-symbol { color:#67ee80; font-weight:900; text-shadow:0 0 8px #57e97966; }
     .h3-media-board .mb-mention-menu { position:absolute; z-index:20; width:268px; max-height:156px; overflow:auto; padding:4px; border:1px solid #75454b; border-radius:7px; background:#211a1deF; box-shadow:0 8px 20px #000b; user-select:none; }
     .h3-media-board .mb-mention-option { display:grid; grid-template-columns:36px minmax(0,1fr) auto; align-items:center; gap:7px; width:100%; min-height:38px; padding:4px; border:0; border-radius:5px; color:#e9e1e3; background:transparent; text-align:left; cursor:pointer; font:11px system-ui,sans-serif; }
@@ -701,24 +717,41 @@ function makeCard(kind, index, asset, update, config = {}) {
   return card;
 }
 
-function makeH3SettingsPanel(widgets, node) {
+function makeH3SettingsPanel(widgets, node, promptWidget) {
   const panel = document.createElement("div"); panel.className = "mb-settings";
   const header = document.createElement("div"); header.className = "mb-settings-head";
   const title = document.createElement("span"); title.className = "mb-settings-title"; title.textContent = "H3 生成参数";
-  const caption = document.createElement("span"); caption.className = "mb-settings-caption"; caption.textContent = "时长 · 画幅 · 尺寸 · 帧数";
+  const caption = document.createElement("span"); caption.className = "mb-settings-caption"; caption.textContent = "名称 · 时长 · 画幅 · 尺寸 · 帧数";
   header.append(title, caption); panel.appendChild(header);
   // Assigned after the controls are created. Keeping this as a variable lets
   // every calculation-related input use the exact same frame synchronization
   // path, instead of only updating when the checkbox itself is clicked.
   let syncFrameMode = () => {};
   let refreshSecondPassControls = () => {};
+  let aspectRatioInput = null;
+  const promptAspectRatio = () => promptH3Overrides(promptWidget?.value || "").aspect_ratio || null;
+  const effectiveAspectRatio = () => promptAspectRatio() || String(widgets.aspect_ratio.value || "9:16");
+  const syncPromptAspectRatio = () => {
+    const forcedRatio = promptAspectRatio();
+    if (forcedRatio && widgets.aspect_ratio.value !== forcedRatio) {
+      widgets.aspect_ratio.value = forcedRatio;
+      widgets.aspect_ratio.callback?.(forcedRatio);
+    }
+    if (!aspectRatioInput) return;
+    aspectRatioInput.value = forcedRatio || String(widgets.aspect_ratio.value || "9:16");
+    aspectRatioInput.disabled = Boolean(forcedRatio);
+    aspectRatioInput.title = forcedRatio
+      ? `提示词已指定 ${forcedRatio}，删除提示词中的比例后才能修改。`
+      : "在提示词未指定比例时可手动选择。";
+    aspectRatioInput.closest(".mb-setting")?.classList.toggle("prompt-aspect-locked", Boolean(forcedRatio));
+  };
   const summaryText = () => {
     const settings = h3Settings(
-      widgets.duration.value, widgets.aspect_ratio.value, widgets.megapixels.value, widgets.multiple.value,
+      widgets.duration.value, effectiveAspectRatio(), widgets.megapixels.value, widgets.multiple.value,
       widgets.second_pass_scale.value, widgets.auto_calculate.value, widgets.manual_frames.value,
       widgets.second_pass_size_mode.value, widgets.second_pass_megapixels.value,
     );
-    return `H3 输出：${settings.width} × ${settings.height} · ${settings.frames} 帧 · ${settings.autoCalculate ? "自动对齐 · " : "手动设置 · "}24 fps · 二采 ${settings.secondPassWidth} × ${settings.secondPassHeight}`;
+    return `H3 输出：${settings.width} × ${settings.height} · ${settings.frames} 帧 · ${settings.autoCalculate ? "自动对齐 · " : "手动设置 · "}24 fps · 放大 ${settings.secondPassWidth} × ${settings.secondPassHeight}`;
   };
   const createControl = (name, label, type, options = {}) => {
     const field = document.createElement("div"); field.className = `mb-setting mb-setting-${type}`;
@@ -734,6 +767,9 @@ function makeH3SettingsPanel(widgets, node) {
     } else if (type === "checkbox") {
       input.type = "checkbox";
       input.checked = Boolean(widget.value);
+    } else if (type === "text") {
+      input.type = "text";
+      input.value = String(widget.value ?? options.value ?? "");
     } else {
       input.type = "number";
       Object.entries(options).forEach(([key, value]) => input.setAttribute(key, String(value)));
@@ -743,7 +779,13 @@ function makeH3SettingsPanel(widgets, node) {
         : String(widget.value ?? options.value ?? "");
     }
     input.onchange = () => {
-      let value = type === "select" ? input.value : type === "checkbox" ? input.checked : Number(input.value);
+      const forcedRatio = name === "aspect_ratio" ? promptAspectRatio() : null;
+      if (forcedRatio) {
+        input.value = forcedRatio;
+        syncPromptAspectRatio();
+        return;
+      }
+      let value = type === "select" || type === "text" ? input.value : type === "checkbox" ? input.checked : Number(input.value);
       if (type === "number" && Number.isInteger(options.decimals) && Number.isFinite(value)) {
         value = Number(value.toFixed(options.decimals));
         input.value = value.toFixed(options.decimals);
@@ -764,9 +806,10 @@ function makeH3SettingsPanel(widgets, node) {
     field.append(caption, input); panel.appendChild(field);
     return input;
   };
+  createControl("video_name", "视频名称", "text", { value: "ComfyUI_" });
   createControl("duration", "时长", "number", { min: 4, max: 15, step: 0.5 });
-  createControl("aspect_ratio", "宽高比", "select");
-  createControl("megapixels", "1采百万像素", "number", { min: 0.1, max: 16, step: 0.1, decimals: 1 });
+  aspectRatioInput = createControl("aspect_ratio", "宽高比", "select");
+  createControl("megapixels", "原始百万像素", "number", { min: 0.1, max: 16, step: 0.1, decimals: 1 });
   createControl("multiple", "倍数", "number", { min: 8, max: 128, step: 4 });
   createControl("auto_calculate", "自动计算帧数", "checkbox");
   const manualInput = createControl("manual_frames", "手动帧数", "number", { min: 1, max: 10000, step: 1 });
@@ -779,23 +822,23 @@ function makeH3SettingsPanel(widgets, node) {
   const secondPassValueInput = document.createElement("input"); secondPassValueInput.type = "number";
   secondPassValueField.append(secondPassValueLabel, secondPassValueInput); panel.appendChild(secondPassValueField);
   const secondPassModeField = document.createElement("div"); secondPassModeField.className = "mb-setting";
-  const secondPassModeLabel = document.createElement("label"); secondPassModeLabel.textContent = "二采尺寸方式";
+  const secondPassModeLabel = document.createElement("label"); secondPassModeLabel.textContent = "放大尺寸方式";
   const secondPassModeInput = document.createElement("select");
   [["倍率放大", "倍率放大"], ["百万原始", "百万原始"]].forEach(([value, text]) => secondPassModeInput.appendChild(new Option(text, value)));
   secondPassModeField.append(secondPassModeLabel, secondPassModeInput); panel.appendChild(secondPassModeField);
   const secondPassOutputField = document.createElement("div"); secondPassOutputField.className = "mb-setting";
-  const secondPassOutputLabel = document.createElement("label"); secondPassOutputLabel.textContent = "2采输出尺寸";
+  const secondPassOutputLabel = document.createElement("label"); secondPassOutputLabel.textContent = "放大输出尺寸";
   const secondPassOutputValue = document.createElement("div"); secondPassOutputValue.className = "mb-setting-output-value";
   secondPassOutputField.append(secondPassOutputLabel, secondPassOutputValue); panel.appendChild(secondPassOutputField);
   const secondPassSettings = () => h3Settings(
-    widgets.duration.value, widgets.aspect_ratio.value, widgets.megapixels.value, widgets.multiple.value,
+    widgets.duration.value, effectiveAspectRatio(), widgets.megapixels.value, widgets.multiple.value,
     widgets.second_pass_scale.value, widgets.auto_calculate.value, widgets.manual_frames.value,
     widgets.second_pass_size_mode.value, widgets.second_pass_megapixels.value,
   );
   refreshSecondPassControls = () => {
     const directMode = widgets.second_pass_size_mode.value === "百万原始";
     const activeWidget = directMode ? widgets.second_pass_megapixels : widgets.second_pass_scale;
-    secondPassValueLabel.textContent = directMode ? "2采百万像素" : "2采放大倍数";
+    secondPassValueLabel.textContent = directMode ? "放大百万像素" : "放大倍数";
     secondPassValueInput.min = directMode ? "0.1" : "1";
     secondPassValueInput.max = directMode ? "16" : "4";
     secondPassValueInput.step = directMode ? "0.01" : "0.1";
@@ -827,6 +870,7 @@ function makeH3SettingsPanel(widgets, node) {
   secondPassModeInput.onchange = () => {
     const value = secondPassModeInput.value === "百万原始" ? "百万原始" : "倍率放大";
     widgets.second_pass_size_mode.value = value; widgets.second_pass_size_mode.callback?.(value);
+    rememberSecondPassSizeMode(value);
     node._h3SaveBackup?.(); node.graph?.setDirtyCanvas(true, true); refreshSecondPassControls();
     panel.querySelector(".mb-output-summary").textContent = summaryText();
   };
@@ -834,7 +878,7 @@ function makeH3SettingsPanel(widgets, node) {
     const automatic = Boolean(widgets.auto_calculate.value);
     if (automatic && copyCalculatedFrames) {
       const calculated = h3Settings(
-        widgets.duration.value, widgets.aspect_ratio.value, widgets.megapixels.value,
+        widgets.duration.value, effectiveAspectRatio(), widgets.megapixels.value,
         widgets.multiple.value, widgets.second_pass_scale.value, true, widgets.manual_frames.value,
       ).frames;
       if (Number(widgets.manual_frames.value) !== calculated) {
@@ -851,11 +895,13 @@ function makeH3SettingsPanel(widgets, node) {
   const summary = document.createElement("div"); summary.className = "mb-output-summary";
   summary.textContent = summaryText();
   panel.appendChild(summary);
+  syncPromptAspectRatio();
   refreshSecondPassControls();
   // Synchronize on first render too, so existing workflows with automatic
   // mode selected are repaired immediately after being opened.
   syncFrameMode(true);
   node._h3RefreshSettingsPanel = () => {
+    syncPromptAspectRatio();
     panel.querySelectorAll("[data-h3-setting]").forEach((input) => {
       const widget = widgets[input.dataset.h3Setting];
       if (!widget) return;
@@ -866,6 +912,7 @@ function makeH3SettingsPanel(widgets, node) {
         input.value = decimals !== null && Number.isFinite(value) ? value.toFixed(decimals) : String(widget.value ?? "");
       }
     });
+    syncPromptAspectRatio();
     refreshSecondPassControls();
     syncFrameMode();
   };
@@ -935,6 +982,9 @@ function makePromptEditor(promptWidget, node, getState, saveBackup, onPromptChan
   shell.className = "mb-prompt-shell";
   const actions = document.createElement("div");
   actions.className = "mb-prompt-actions";
+  const help = document.createElement("span");
+  help.className = "mb-prompt-help";
+  help.textContent = "提示词说明：@可以呼出素材，鼠标放在关键词能显示素材，按住 Ctrl 可以点击素材播放素材。提示词优先锁定视频比例";
   const editor = document.createElement("div");
   editor.className = "mb-prompt-editor";
   editor.contentEditable = "true";
@@ -943,6 +993,7 @@ function makePromptEditor(promptWidget, node, getState, saveBackup, onPromptChan
   const menu = document.createElement("div");
   menu.className = "mb-mention-menu";
   menu.hidden = true;
+  actions.appendChild(help);
   shell.append(actions, editor, menu);
 
   const referencePreview = document.createElement("div");
@@ -1077,11 +1128,27 @@ function makePromptEditor(promptWidget, node, getState, saveBackup, onPromptChan
       return merged;
     }, []);
   };
+  const aspectRatioRanges = (value) => {
+    const ranges = [];
+    const add = (start, end) => { if (end > start) ranges.push([start, end]); };
+    // Keep the cyan text exactly on the ratio that was written, accepting both
+    // Chinese and English colons as well as surrounding whitespace.
+    for (const ratio of Object.keys(H3_RATIOS).sort((a, b) => b.length - a.length)) {
+      const [width, height] = ratio.split(":");
+      const pattern = new RegExp(`(^|[^0-9])(${width}\\s*[:：]\\s*${height})(?=$|[^0-9])`, "g");
+      for (let match = pattern.exec(value); match; match = pattern.exec(value)) {
+        const prefix = match[1]?.length || 0;
+        add(match.index + prefix, match.index + prefix + match[2].length);
+      }
+    }
+    return ranges;
+  };
   const renderText = (value, caret = null) => {
     hideReferencePreview();
     const fragment = document.createDocumentFragment();
     const matcher = /<(Picture|Audio|Video)\s+([1-9]\d*)>/g;
     const dialogue = dialogueRanges(value);
+    const aspectRatios = aspectRatioRanges(value);
     const appendPiece = (text, className = "") => {
       for (const part of text.split(/(@)/)) {
         if (!part) continue;
@@ -1090,23 +1157,28 @@ function makePromptEditor(promptWidget, node, getState, saveBackup, onPromptChan
         } else if (className) {
           const styled = document.createElement("span"); styled.className = className; styled.textContent = part;
           if (className === "mb-dialogue") { styled.style.color = "#ffd45d"; styled.style.fontWeight = "700"; }
+          if (className === "mb-aspect-ratio") { styled.style.color = "#69e9f5"; styled.style.fontWeight = "800"; }
           fragment.appendChild(styled);
         } else fragment.appendChild(document.createTextNode(part));
       }
     };
     const appendText = (text, offset) => {
-      let position = 0;
       const end = offset + text.length;
-      for (const [rangeStart, rangeEnd] of dialogue) {
+      const boundaries = new Set([offset, end]);
+      for (const [rangeStart, rangeEnd] of [...dialogue, ...aspectRatios]) {
         const start = Math.max(offset, rangeStart); const finish = Math.min(end, rangeEnd);
-        if (finish <= start) continue;
-        if (start > offset + position) appendPiece(text.slice(position, start - offset));
-        // Inline fallback makes dialogue remain visibly yellow even when a
-        // browser keeps an older cached stylesheet during a ComfyUI refresh.
-        appendPiece(text.slice(start - offset, finish - offset), "mb-dialogue");
-        position = finish - offset;
+        if (finish > start) { boundaries.add(start); boundaries.add(finish); }
       }
-      if (position < text.length) appendPiece(text.slice(position));
+      const points = [...boundaries].sort((a, b) => a - b);
+      for (let index = 0; index < points.length - 1; index++) {
+        const start = points[index], finish = points[index + 1];
+        const className = aspectRatios.some(([rangeStart, rangeEnd]) => start >= rangeStart && finish <= rangeEnd)
+          ? "mb-aspect-ratio"
+          : dialogue.some(([rangeStart, rangeEnd]) => start >= rangeStart && finish <= rangeEnd)
+            ? "mb-dialogue"
+            : "";
+        appendPiece(text.slice(start - offset, finish - offset), className);
+      }
     };
     let cursor = 0;
     for (let match = matcher.exec(value); match; match = matcher.exec(value)) {
@@ -1291,7 +1363,7 @@ function createBoard(node) {
   }
   const manifestWidget = node.widgets?.find((widget) => widget.name === "media_manifest");
   const promptWidget = node.widgets?.find((widget) => widget.name === "prompt");
-  const settingsWidgets = Object.fromEntries(["duration", "aspect_ratio", "megapixels", "multiple", "second_pass_scale", "second_pass_size_mode", "second_pass_megapixels", "auto_calculate", "manual_frames", "noise_seed", "noise_mode", "noise_after_generate"].map((name) => [name, node.widgets?.find((widget) => widget.name === name)]));
+  const settingsWidgets = Object.fromEntries(["video_name", "duration", "aspect_ratio", "megapixels", "multiple", "second_pass_scale", "second_pass_size_mode", "second_pass_megapixels", "auto_calculate", "manual_frames", "noise_seed", "noise_mode", "noise_after_generate"].map((name) => [name, node.widgets?.find((widget) => widget.name === name)]));
   const retryWhenWidgetsReady = () => {
     const attempts = node._h3BoardInitAttempts || 0;
     if (attempts >= 8 || node._h3BoardInitScheduled) return;
@@ -1332,6 +1404,11 @@ function createBoard(node) {
     for (const [name, widget] of Object.entries(settingsWidgets)) {
       if (persisted.settings?.[name] !== undefined) widget.value = persisted.settings[name];
     }
+  } else {
+    // A fresh board follows the last choice made in this browser. Workflow
+    // snapshots still win, so reopening an existing workflow remains exact.
+    const rememberedMode = readRememberedSecondPassSizeMode();
+    if (rememberedMode) settingsWidgets.second_pass_size_mode.value = rememberedMode;
   }
   // A short-lived schema put the second-pass scale in the middle of the
   // serialized widget list. Repair only impossible values it may have left in
@@ -1350,6 +1427,7 @@ function createBoard(node) {
     if (settingsWidgets.second_pass_size_mode.value !== "百万原始") settingsWidgets.second_pass_size_mode.value = "倍率放大";
     const secondMegapixels = Number(settingsWidgets.second_pass_megapixels.value);
     if (!Number.isFinite(secondMegapixels) || secondMegapixels < 0.1 || secondMegapixels > 16) settingsWidgets.second_pass_megapixels.value = 1.0;
+    if (typeof settingsWidgets.video_name.value !== "string" || !settingsWidgets.video_name.value.trim()) settingsWidgets.video_name.value = "ComfyUI_";
   };
   repairLegacySettings();
 
@@ -1385,7 +1463,6 @@ function createBoard(node) {
   };
   const applyPromptOverrides = (value) => {
     const overrides = promptH3Overrides(value);
-    if (!Object.keys(overrides).length) return;
     for (const [name, setting] of Object.entries(overrides)) {
       const widget = settingsWidgets[name];
       if (!widget || widget.value === setting) continue;
@@ -1687,14 +1764,17 @@ function createBoard(node) {
       if (!files.some((file) => kindForFile(file))) return;
       stop(event); await appendFiles(files);
     };
-    root.appendChild(makeH3SettingsPanel(settingsWidgets, node));
+    root.appendChild(makeH3SettingsPanel(settingsWidgets, node, promptWidget));
     root.appendChild(makeNoisePanel(settingsWidgets, node));
     prompt.refreshReferences?.();
     root.appendChild(prompt);
     root.appendChild(makeHeightResizeHandle());
   };
   node._h3RenderBoard = render;
-  node._h3SetPromptText = (value) => prompt.setText?.(value);
+  node._h3SetPromptText = (value) => {
+    prompt.setText?.(value);
+    applyPromptOverrides(value);
+  };
   render();
   // The Noise controls added below the H3 settings need real node height;
   // otherwise the flexible prompt editor can paint past the node boundary.
@@ -1758,6 +1838,9 @@ function createBoard(node) {
     getHeight: () => Math.max(1374, node.size[1] - 48),
     afterResize: () => { prompt.querySelector(".mb-prompt-editor").style.minHeight = "145px"; },
   });
+  // The board is presentation only.  Older versions serialized this value as
+  // "media-board", which shifts subsequent real widget values in a workflow.
+  domWidget.serialize = false;
   node.size = [Math.max(minSize[0], node.size[0]), Math.max(minSize[1], node.size[1])];
   node.setSize?.(node.size);
   return domWidget;
@@ -2648,6 +2731,36 @@ function isUniversalLineSwitchNode(node) {
   return node?.comfyClass === H3_UNIVERSAL_LINE_SWITCH_NODE || node?.type === H3_UNIVERSAL_LINE_SWITCH_NODE;
 }
 
+function injectStableMultiLoraStyle() {
+  if (document.getElementById("h3-stable-multi-lora-style")) return;
+  const style = document.createElement("style");
+  style.id = "h3-stable-multi-lora-style";
+  style.textContent = `
+    .h3-stable-multi-lora { box-sizing:border-box; display:flex; flex-direction:column; gap:6px; width:100%; min-width:0; max-width:100%; padding:4px 0 7px; overflow:hidden; color:#e6edf0; font:12px system-ui,sans-serif; user-select:none; }
+    .h3-stable-multi-lora .h3-sml-head { display:flex; min-width:0; align-items:center; justify-content:space-between; gap:8px; color:#a6c0c9; font-size:10px; }
+    .h3-stable-multi-lora .h3-sml-head strong, .h3-stable-multi-lora .h3-sml-head span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .h3-stable-multi-lora .h3-sml-head strong { color:#dbeef3; font-size:11px; }
+    .h3-stable-multi-lora .h3-sml-row { box-sizing:border-box; display:grid; width:100%; min-width:0; grid-template-columns:38px minmax(0,1fr) 68px 68px; align-items:center; gap:6px; min-height:32px; padding:3px 5px; border:1px solid #4b4a70; border-radius:8px; background:linear-gradient(135deg,#272640,#202038); }
+    .h3-stable-multi-lora .h3-sml-row.bypassed { opacity:.58; background:linear-gradient(135deg,#262633,#20202b); }
+    .h3-stable-multi-lora select, .h3-stable-multi-lora input, .h3-stable-multi-lora button { box-sizing:border-box; height:26px; min-width:0; border:1px solid #66638d; border-radius:5px; color:#e9e9f2; background:#191924; font:11px system-ui,sans-serif; }
+    .h3-stable-multi-lora select { width:100%; padding:0 5px; }
+    .h3-stable-multi-lora input { width:100%; padding:0 5px; text-align:right; }
+    .h3-stable-multi-lora input:focus, .h3-stable-multi-lora select:focus { outline:1px solid #a89be6; border-color:#a89be6; }
+    .h3-stable-multi-lora .h3-sml-switch { position:relative; width:36px; height:21px; padding:0; border-radius:99px; border-color:#686773; background:#585862; cursor:pointer; }
+    .h3-stable-multi-lora .h3-sml-switch::after { content:""; position:absolute; top:2px; left:2px; width:15px; height:15px; border-radius:50%; background:#d4d5da; transition:transform .15s ease; }
+    .h3-stable-multi-lora .h3-sml-switch.enabled { border-color:#6e7bc0; background:#879bd0; }
+    .h3-stable-multi-lora .h3-sml-switch.enabled::after { transform:translateX(13px); background:#f6f7ff; }
+    .h3-stable-multi-lora .h3-sml-strength { position:relative; }
+    .h3-stable-multi-lora .h3-sml-strength::before { position:absolute; z-index:1; top:7px; left:5px; color:#aab2ca; font-size:9px; font-weight:800; pointer-events:none; }
+    .h3-stable-multi-lora .h3-sml-model::before { content:"M"; }
+    .h3-stable-multi-lora .h3-sml-clip::before { content:"C"; }
+    .h3-stable-multi-lora .h3-sml-strength input { padding-left:17px; }
+    .h3-stable-multi-lora .h3-sml-row.locked { opacity:.6; }
+    .h3-stable-multi-lora .h3-sml-row.locked select, .h3-stable-multi-lora .h3-sml-row.locked input, .h3-stable-multi-lora .h3-sml-row.locked button { cursor:not-allowed; }
+  `;
+  document.head.appendChild(style);
+}
+
 function stableMultiLoraWidget(node, name) {
   return node.widgets?.find((widget) => widget.name === name);
 }
@@ -2854,6 +2967,130 @@ function setStableMultiLoraVisible(widget, visible) {
   }
 }
 
+function setStableMultiLoraCompactWidgetValue(node, widget, value) {
+  if (!widget || widget.disabled) return;
+  setStableMultiLoraWidgetValue(widget, value);
+  widget.callback?.call(widget, value);
+  node.graph?.setDirtyCanvas?.(true, true);
+}
+
+function createStableMultiLoraCompactUI(node) {
+  if (node._stableMultiLoraCompactReady) {
+    node._stableMultiLoraCompactRender?.();
+    return;
+  }
+  const firstLora = stableMultiLoraWidget(node, "lora_1");
+  if (!firstLora) {
+    const attempts = node._stableMultiLoraCompactAttempts || 0;
+    if (attempts < 8 && !node._stableMultiLoraCompactPending) {
+      node._stableMultiLoraCompactAttempts = attempts + 1;
+      node._stableMultiLoraCompactPending = true;
+      setTimeout(() => { node._stableMultiLoraCompactPending = false; createStableMultiLoraCompactUI(node); }, 80 * (attempts + 1));
+    }
+    return;
+  }
+  injectStableMultiLoraStyle();
+  node._stableMultiLoraCompactReady = true;
+  const root = document.createElement("div");
+  root.className = "h3-stable-multi-lora";
+  root.onpointerdown = (event) => event.stopPropagation();
+  const head = document.createElement("div"); head.className = "h3-sml-head";
+  const title = document.createElement("strong"); title.textContent = "LoRA 列表";
+  const hint = document.createElement("span"); hint.textContent = "关闭即绕过，选择和强度会保留";
+  head.append(title, hint);
+  const rows = document.createElement("div");
+  root.append(head, rows);
+
+  const intrinsicHeight = () => {
+    // addDOMWidget can stretch root to match a node's current height. Measure
+    // only its real children, otherwise each refresh would make this node grow.
+    const style = getComputedStyle(root);
+    const padding = (Number.parseFloat(style.paddingTop) || 0) + (Number.parseFloat(style.paddingBottom) || 0);
+    const gap = Number.parseFloat(style.rowGap || style.gap) || 0;
+    return Math.ceil(padding + (head.offsetHeight || 0) + (rows.offsetHeight || 0) + gap);
+  };
+
+  const syncSize = () => requestAnimationFrame(() => {
+    // ComfyUI stretches a DOM widget to all remaining node height.  Therefore
+    // root.offsetHeight reflects the old oversized node and cannot be used.
+    // `last_y` is the real canvas position at which this DOM widget begins;
+    // intrinsicHeight measures only its header and visible LoRA rows. The DOM
+    // wrapper itself reserves another fixed 20 canvas units around the root.
+    const widgetTop = Number(domWidget?.last_y) || 90;
+    const exactHeight = Math.ceil(widgetTop + intrinsicHeight() + 20);
+    const width = Math.max(250, Number(node.size?.[0]) || 250);
+    node._stableMultiLoraAutoHeight = exactHeight;
+    node.min_size = [250, exactHeight];
+    node.max_size = [Number.MAX_SAFE_INTEGER, exactHeight];
+    if (Math.abs((Number(node.size?.[1]) || 0) - exactHeight) > 1) {
+      node.setSize?.([width, exactHeight]);
+      // Some versions of the original node restore their serialized height
+      // from onResize.  Apply the compact height once more after that callback
+      // so an opened workflow starts directly below its final visible row.
+      if (Array.isArray(node.size)) node.size[1] = exactHeight;
+      node.graph?.setDirtyCanvas?.(true, true);
+    }
+  });
+
+  const render = () => {
+    const count = Math.max(1, Math.min(STABLE_MULTI_LORA_MAX, Number(stableMultiLoraWidget(node, "lora_count")?.value) || 1));
+    const locked = Boolean(node._stableMultiLoraSyncSource);
+    rows.replaceChildren();
+    for (let index = 1; index <= count; index++) {
+      const loraWidget = stableMultiLoraWidget(node, `lora_${index}`);
+      const modelWidget = stableMultiLoraWidget(node, `model_strength_${index}`);
+      const clipWidget = stableMultiLoraWidget(node, `clip_strength_${index}`);
+      const bypassWidget = stableMultiLoraWidget(node, `bypass_${index}`);
+      if (!loraWidget || !modelWidget || !clipWidget || !bypassWidget) continue;
+      const bypassed = Boolean(bypassWidget.value);
+      const row = document.createElement("div");
+      row.className = `h3-sml-row${bypassed ? " bypassed" : ""}${locked ? " locked" : ""}`;
+      row.title = `LoRA ${index}`;
+      const toggle = document.createElement("button");
+      toggle.className = `h3-sml-switch${bypassed ? "" : " enabled"}`;
+      toggle.title = bypassed ? "当前绕过；点击启用此 LoRA" : "当前启用；点击绕过此 LoRA（保留选择和强度）";
+      toggle.disabled = locked;
+      toggle.onclick = (event) => { event.stopPropagation(); setStableMultiLoraCompactWidgetValue(node, bypassWidget, !bypassed); render(); };
+      const select = document.createElement("select");
+      const values = Array.isArray(loraWidget.options?.values) ? loraWidget.options.values : [loraWidget.value];
+      values.forEach((value) => select.appendChild(new Option(String(value), String(value), false, String(value) === String(loraWidget.value))));
+      if (![...select.options].some((option) => option.selected)) select.appendChild(new Option(String(loraWidget.value ?? "(绕过)"), String(loraWidget.value ?? "(绕过)"), false, true));
+      select.disabled = locked;
+      select.title = `LoRA ${index}`;
+      select.onchange = (event) => { event.stopPropagation(); setStableMultiLoraCompactWidgetValue(node, loraWidget, select.value); render(); };
+      const makeStrength = (widget, className, label) => {
+        const wrap = document.createElement("span"); wrap.className = `h3-sml-strength ${className}`; wrap.title = label;
+        const input = document.createElement("input"); input.type = "number"; input.step = String(widget.options?.step ?? 0.01); input.min = String(widget.options?.min ?? -100); input.max = String(widget.options?.max ?? 100); input.value = String(widget.value ?? 1); input.disabled = locked;
+        const commit = (event) => { event.stopPropagation(); const value = Number(input.value); if (!Number.isFinite(value)) { input.value = String(widget.value ?? 1); return; } setStableMultiLoraCompactWidgetValue(node, widget, value); };
+        input.onchange = commit; input.onblur = commit; input.onpointerdown = (event) => event.stopPropagation(); wrap.appendChild(input); return wrap;
+      };
+      row.append(toggle, select, makeStrength(modelWidget, "h3-sml-model", "模型强度"), makeStrength(clipWidget, "h3-sml-clip", "CLIP 强度"));
+      rows.appendChild(row);
+    }
+    syncSize();
+  };
+  const domWidget = node.addDOMWidget("stable_multi_lora_ui", "STABLE_MULTI_LORA_UI", root, {
+    getValue: () => "stable-multi-lora-ui",
+    getMinHeight: () => 48,
+    getHeight: () => Math.max(48, intrinsicHeight()),
+  });
+  domWidget.serialize = false;
+  const priorResize = node.onResize;
+  node.onResize = function (size) {
+    // Width remains user-resizable. Height belongs to the compact list and is
+    // recalculated when its LoRA count changes.
+    priorResize?.call(this, size);
+    if (Array.isArray(size) && Number.isFinite(Number(this._stableMultiLoraAutoHeight))) {
+      size[1] = Number(this._stableMultiLoraAutoHeight);
+    }
+  };
+  node._stableMultiLoraCompactRender = render;
+  render();
+  // Existing workflow nodes receive their DOM layout a frame later. Recheck
+  // once it has a real offset so the initial load is wrapped as well.
+  requestAnimationFrame(() => requestAnimationFrame(syncSize));
+}
+
 function refreshStableMultiLora(node, requestedCount) {
   const countWidget = stableMultiLoraWidget(node, "lora_count");
   const count = Math.max(1, Math.min(
@@ -2877,12 +3114,21 @@ function refreshStableMultiLora(node, requestedCount) {
     widgets.forEach((widget, offset) => {
       if (!widget) return;
       widget.label = labels[offset];
-      setStableMultiLoraVisible(widget, index <= count);
+      // The compact DOM list renders active rows. Keep backend widgets alive
+      // for workflow serialization and config sync, but hide their old UI.
+      setStableMultiLoraVisible(widget, false);
     });
   }
   const size = node.computeSize?.();
-  if (size) node.setSize?.([Math.max(Number(node.size?.[0]) || 0, size[0]), size[1]]);
+  if (size) {
+    const minimumHeight = Number(node.min_size?.[1]) || 0;
+    node.setSize?.([
+      Math.max(Number(node.size?.[0]) || 0, size[0]),
+      Math.max(Number(size[1]) || 0, minimumHeight),
+    ]);
+  }
   node.graph?.setDirtyCanvas?.(true, true);
+  node._stableMultiLoraCompactRender?.();
 }
 
 function createStableMultiLoraLoader(node) {
@@ -2913,6 +3159,7 @@ function createStableMultiLoraLoader(node) {
       notifyStableMultiLoraConfigChanged(node);
     };
   });
+  createStableMultiLoraCompactUI(node);
   refreshStableMultiLora(node);
   refreshStableMultiLoraSync(node);
   const previousConnections = node.onConnectionsChange;
@@ -3322,6 +3569,45 @@ function createWorkflowSwitchboard(controller) {
 
 app.registerExtension({
   name: "h3.media_board",
+  beforeConfigureGraph(graphData) {
+      // Migrate all legacy second-pass layouts. ComfyUI inserts its automatic
+      // seed "after generate" widget before these fields, so their serialized
+      // tail begins at index 12 and is: scale, mode, megapixels, video name.
+      for (const graphNode of graphData?.nodes || []) {
+      if (graphNode?.type !== "H3MediaBoard" || !Array.isArray(graphNode.widgets_values)) continue;
+      const values = graphNode.widgets_values;
+      if (values.length < 12) continue;
+
+      const legacyTail = values.slice(12).filter((value) => value !== "media-board");
+      const numericValues = legacyTail.filter((value) => Number.isFinite(Number(value))).map(Number);
+      const scale = numericValues.find((value) => value >= 1 && value <= 4) ?? 1.0;
+      const megapixels = numericValues.find((value, index) => index > numericValues.indexOf(scale) && value >= 0.1 && value <= 16)
+        ?? 1.0;
+      const mode = legacyTail.findLast?.((value) => H3_SECOND_PASS_SIZE_MODES.has(value))
+        || legacyTail.slice().reverse().find((value) => H3_SECOND_PASS_SIZE_MODES.has(value))
+        || "倍率放大";
+      const named = graphNode.widgets_values_named;
+      const videoName = typeof named?.video_name === "string" && named.video_name.trim()
+        ? named.video_name
+        : legacyTail.findLast?.((value) => typeof value === "string"
+          && value !== "media-board" && !H3_SECOND_PASS_SIZE_MODES.has(value))
+          || "ComfyUI_";
+
+      // Replace instead of inserting: this also repairs workflows already
+      // saved with the former shifted strings in the numeric positions.
+      values.splice(12, values.length - 12, scale, mode, megapixels, videoName);
+
+      // Recent ComfyUI versions also persist a named copy.  Correcting only
+      // widgets_values is not enough: the named values otherwise keep sending
+      // a Chinese mode label into the FLOAT input on prompt submission.
+      if (graphNode.widgets_values_named && typeof graphNode.widgets_values_named === "object") {
+        graphNode.widgets_values_named.second_pass_scale = scale;
+        graphNode.widgets_values_named.second_pass_size_mode = mode;
+        graphNode.widgets_values_named.second_pass_megapixels = megapixels;
+        graphNode.widgets_values_named.video_name = videoName;
+      }
+    }
+  },
   setup() {
     setupTopToolbarActionsVisibility();
     setupRestartReconnect();
