@@ -661,6 +661,10 @@ function makeH3SettingsPanel(widgets, node) {
   const title = document.createElement("span"); title.className = "mb-settings-title"; title.textContent = "H3 生成参数";
   const caption = document.createElement("span"); caption.className = "mb-settings-caption"; caption.textContent = "时长 · 画幅 · 尺寸 · 帧数";
   header.append(title, caption); panel.appendChild(header);
+  // Assigned after the controls are created. Keeping this as a variable lets
+  // every calculation-related input use the exact same frame synchronization
+  // path, instead of only updating when the checkbox itself is clicked.
+  let syncFrameMode = () => {};
   const summaryText = () => {
     const settings = h3Settings(widgets.duration.value, widgets.aspect_ratio.value, widgets.megapixels.value, widgets.multiple.value, widgets.second_pass_scale.value, widgets.auto_calculate.value, widgets.manual_frames.value);
     return `H3 输出：${settings.width} × ${settings.height} · ${settings.frames} 帧 · ${settings.autoCalculate ? "自动对齐 · " : "手动设置 · "}24 fps`;
@@ -697,6 +701,10 @@ function makeH3SettingsPanel(widgets, node) {
       widget.callback?.(value);
       node._h3SaveBackup?.();
       node.graph?.setDirtyCanvas(true, true);
+      // When automatic mode is on, manual_frames is also kept current. That
+      // makes a later switch to manual mode start from the displayed result,
+      // rather than an old value from before the duration was changed.
+      if (name !== "manual_frames") syncFrameMode(true);
       panel.querySelector(".mb-output-summary").textContent = summaryText();
     };
     field.append(caption, input); panel.appendChild(field);
@@ -706,10 +714,10 @@ function makeH3SettingsPanel(widgets, node) {
   createControl("aspect_ratio", "宽高比", "select");
   createControl("megapixels", "1采百万像素", "number", { min: 0.1, max: 16, step: 0.1, decimals: 1 });
   createControl("multiple", "倍数", "number", { min: 8, max: 128, step: 4 });
-  const autoInput = createControl("auto_calculate", "自动计算帧数", "checkbox");
+  createControl("auto_calculate", "自动计算帧数", "checkbox");
   const manualInput = createControl("manual_frames", "手动帧数", "number", { min: 1, max: 10000, step: 1 });
   createControl("second_pass_scale", "2采放大倍数", "number", { min: 1, max: 4, step: 0.1, decimals: 1 });
-  const syncFrameMode = (copyCalculatedFrames = false) => {
+  syncFrameMode = (copyCalculatedFrames = false) => {
     const automatic = Boolean(widgets.auto_calculate.value);
     if (automatic && copyCalculatedFrames) {
       const calculated = h3Settings(
@@ -727,12 +735,12 @@ function makeH3SettingsPanel(widgets, node) {
     manualInput.disabled = automatic;
     panel.querySelector(".mb-output-summary").textContent = summaryText();
   };
-  const autoChange = autoInput.onchange;
-  autoInput.onchange = (event) => { autoChange(event); syncFrameMode(true); };
   const summary = document.createElement("div"); summary.className = "mb-output-summary";
   summary.textContent = summaryText();
   panel.appendChild(summary);
-  syncFrameMode();
+  // Synchronize on first render too, so existing workflows with automatic
+  // mode selected are repaired immediately after being opened.
+  syncFrameMode(true);
   node._h3RefreshSettingsPanel = () => {
     panel.querySelectorAll("[data-h3-setting]").forEach((input) => {
       const widget = widgets[input.dataset.h3Setting];
