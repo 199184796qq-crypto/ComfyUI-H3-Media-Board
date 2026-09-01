@@ -721,7 +721,7 @@ function makeH3SettingsPanel(widgets, node, promptWidget) {
   const panel = document.createElement("div"); panel.className = "mb-settings";
   const header = document.createElement("div"); header.className = "mb-settings-head";
   const title = document.createElement("span"); title.className = "mb-settings-title"; title.textContent = "H3 生成参数";
-  const caption = document.createElement("span"); caption.className = "mb-settings-caption"; caption.textContent = "名称 · 时长 · 画幅 · 尺寸 · 帧数";
+  const caption = document.createElement("span"); caption.className = "mb-settings-caption"; caption.textContent = "名称 · 时长 · 画幅 · 尺寸 · 帧数 · 步数";
   header.append(title, caption); panel.appendChild(header);
   // Assigned after the controls are created. Keeping this as a variable lets
   // every calculation-related input use the exact same frame synchronization
@@ -811,6 +811,7 @@ function makeH3SettingsPanel(widgets, node, promptWidget) {
   aspectRatioInput = createControl("aspect_ratio", "宽高比", "select");
   createControl("megapixels", "原始百万像素", "number", { min: 0.1, max: 16, step: 0.1, decimals: 1 });
   createControl("multiple", "倍数", "number", { min: 8, max: 128, step: 4 });
+  createControl("scheduler_steps", "基本调度器步数", "number", { min: 1, max: 100, step: 1 });
   createControl("auto_calculate", "自动计算帧数", "checkbox");
   const manualInput = createControl("manual_frames", "手动帧数", "number", { min: 1, max: 10000, step: 1 });
   // The value field changes meaning with the compact mode selector. In
@@ -1363,9 +1364,13 @@ function createBoard(node) {
     node.addOutput?.("2采放大倍数", "FLOAT");
     node.graph?.setDirtyCanvas?.(true, true);
   }
+  if (!node.outputs?.some((output) => output.name === "调度器步数")) {
+    node.addOutput?.("调度器步数", "INT");
+    node.graph?.setDirtyCanvas?.(true, true);
+  }
   const manifestWidget = node.widgets?.find((widget) => widget.name === "media_manifest");
   const promptWidget = node.widgets?.find((widget) => widget.name === "prompt");
-  const settingsWidgets = Object.fromEntries(["video_name", "duration", "aspect_ratio", "megapixels", "multiple", "second_pass_scale", "second_pass_size_mode", "second_pass_megapixels", "auto_calculate", "manual_frames", "noise_seed", "noise_mode", "noise_after_generate"].map((name) => [name, node.widgets?.find((widget) => widget.name === name)]));
+  const settingsWidgets = Object.fromEntries(["video_name", "duration", "aspect_ratio", "megapixels", "multiple", "scheduler_steps", "second_pass_scale", "second_pass_size_mode", "second_pass_megapixels", "auto_calculate", "manual_frames", "noise_seed", "noise_mode", "noise_after_generate"].map((name) => [name, node.widgets?.find((widget) => widget.name === name)]));
   const retryWhenWidgetsReady = () => {
     const attempts = node._h3BoardInitAttempts || 0;
     if (attempts >= 8 || node._h3BoardInitScheduled) return;
@@ -1430,6 +1435,10 @@ function createBoard(node) {
     const secondMegapixels = Number(settingsWidgets.second_pass_megapixels.value);
     if (!Number.isFinite(secondMegapixels) || secondMegapixels < 0.1 || secondMegapixels > 16) settingsWidgets.second_pass_megapixels.value = 1.0;
     if (typeof settingsWidgets.video_name.value !== "string" || !settingsWidgets.video_name.value.trim()) settingsWidgets.video_name.value = "ComfyUI_";
+    const schedulerSteps = Math.round(Number(settingsWidgets.scheduler_steps.value));
+    settingsWidgets.scheduler_steps.value = Number.isFinite(schedulerSteps) && schedulerSteps >= 1 && schedulerSteps <= 100
+      ? schedulerSteps
+      : 8;
   };
   repairLegacySettings();
 
@@ -3574,7 +3583,8 @@ app.registerExtension({
   beforeConfigureGraph(graphData) {
       // Migrate all legacy second-pass layouts. ComfyUI inserts its automatic
       // seed "after generate" widget before these fields, so their serialized
-      // tail begins at index 12 and is: scale, mode, megapixels, video name.
+      // tail begins at index 12 and is: scale, mode, megapixels, video name,
+      // scheduler steps. Older workflows omit the final value and get 8.
       for (const graphNode of graphData?.nodes || []) {
       if (graphNode?.type !== "H3MediaBoard" || !Array.isArray(graphNode.widgets_values)) continue;
       const values = graphNode.widgets_values;
@@ -3594,10 +3604,17 @@ app.registerExtension({
         : legacyTail.findLast?.((value) => typeof value === "string"
           && value !== "media-board" && !H3_SECOND_PASS_SIZE_MODES.has(value))
           || "ComfyUI_";
+      const namedSchedulerSteps = Math.round(Number(named?.scheduler_steps));
+      const tailSchedulerSteps = Math.round(Number(legacyTail[4]));
+      const schedulerSteps = Number.isFinite(namedSchedulerSteps) && namedSchedulerSteps >= 1 && namedSchedulerSteps <= 100
+        ? namedSchedulerSteps
+        : Number.isFinite(tailSchedulerSteps) && tailSchedulerSteps >= 1 && tailSchedulerSteps <= 100
+          ? tailSchedulerSteps
+          : 8;
 
       // Replace instead of inserting: this also repairs workflows already
       // saved with the former shifted strings in the numeric positions.
-      values.splice(12, values.length - 12, scale, mode, megapixels, videoName);
+      values.splice(12, values.length - 12, scale, mode, megapixels, videoName, schedulerSteps);
 
       // Recent ComfyUI versions also persist a named copy.  Correcting only
       // widgets_values is not enough: the named values otherwise keep sending
@@ -3607,6 +3624,7 @@ app.registerExtension({
         graphNode.widgets_values_named.second_pass_size_mode = mode;
         graphNode.widgets_values_named.second_pass_megapixels = megapixels;
         graphNode.widgets_values_named.video_name = videoName;
+        graphNode.widgets_values_named.scheduler_steps = schedulerSteps;
       }
     }
   },
