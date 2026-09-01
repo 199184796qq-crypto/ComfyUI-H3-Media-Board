@@ -488,6 +488,7 @@ class H3MediaBoard:
                 # widget positions.
                 "video_name": ("STRING", {"default": "ComfyUI_", "multiline": False}),
                 "scheduler_steps": ("INT", {"default": 8, "min": 1, "max": 100, "step": 1}),
+                "high_sigmas": ("INT", {"default": 5, "min": 0, "max": 100, "step": 1}),
             },
             # A separate forced input guarantees a visible socket in both the
             # legacy canvas and Nodes 2.0.  The local textarea remains usable
@@ -496,8 +497,8 @@ class H3MediaBoard:
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
-    RETURN_TYPES = ("H3_MEDIA_BOARD", "NOISE", "FLOAT", "STRING", "INT")
-    RETURN_NAMES = ("media_board", "noise", "2采放大倍数", "视频名称", "调度器步数")
+    RETURN_TYPES = ("H3_MEDIA_BOARD", "NOISE", "FLOAT", "STRING", "INT", "INT")
+    RETURN_NAMES = ("media_board", "noise", "2采放大倍数", "视频名称", "调度器步数", "高频Sigmas")
     FUNCTION = "collect"
     CATEGORY = "H3 / Media"
 
@@ -512,7 +513,7 @@ class H3MediaBoard:
                 unique_id: str | None = None, noise_after_generate: str = "randomize",
                 second_pass_scale: float = 1.0, second_pass_size_mode: str = "倍率放大",
                 second_pass_megapixels: float = 1.0, video_name: str = "ComfyUI_",
-                scheduler_steps: int = 8):
+                scheduler_steps: int = 8, high_sigmas: int = 5):
         manifest = _clean_manifest(media_manifest)
         effective_prompt = external_prompt if external_prompt is not None else prompt
         manifest["prompt"] = effective_prompt
@@ -534,8 +535,10 @@ class H3MediaBoard:
         # ComfyUI_ prefix instead of producing an unnamed file.
         resolved_video_name = str(video_name or "ComfyUI_")
         resolved_scheduler_steps = min(100, max(1, int(scheduler_steps)))
+        resolved_high_sigmas = min(100, max(0, int(high_sigmas)))
         settings["video_name"] = resolved_video_name
         settings["scheduler_steps"] = resolved_scheduler_steps
+        settings["high_sigmas"] = resolved_high_sigmas
         manifest["video_name"] = resolved_video_name
         manifest["settings"] = settings
         # UI payload must remain JSON serializable; the executable noise object
@@ -550,7 +553,7 @@ class H3MediaBoard:
             "ui": {"h3_media_board": [manifest]},
             "result": (
                 runtime_manifest, noise, float(settings["second_pass_scale"]), resolved_video_name,
-                resolved_scheduler_steps,
+                resolved_scheduler_steps, resolved_high_sigmas,
             ),
         }
 
