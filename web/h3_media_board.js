@@ -3354,8 +3354,10 @@ function nodesForWorkflowTarget(controller, target) {
 
 function isWorkflowTargetBypassed(controller, target) {
   const nodes = nodesForWorkflowTarget(controller, target);
-  // Groups read as bypassed only when every member was Ctrl+B'd.
-  return nodes.length > 0 && nodes.every((node) => Number(node.mode) === 4);
+  // A green group switch must mean every member can execute. Treat either
+  // LiteGraph's Never mode (2) or Bypass mode (4) as disabled; otherwise a
+  // partially disabled group misleadingly appeared enabled.
+  return nodes.length > 0 && nodes.some((node) => [2, 4].includes(Number(node.mode)));
 }
 
 function syncWorkflowTargetsFromCanvas(controller, targets = readWorkflowTargets(controller)) {
@@ -3393,16 +3395,16 @@ function applyWorkflowSwitchboard(controller, targets = readWorkflowTargets(cont
   if (!controller?.graph) return;
   controller.properties ??= {};
   const saved = controller.properties[WORKFLOW_SWITCHBOARD_ORIGINAL_MODES] ??= {};
-  // Reset first, then apply rows in their visual order. Therefore a dragged
-  // node row can deliberately override the setting of its parent group.
+  // Reset first, then explicitly apply every row in visual order. Both ON and
+  // OFF must write a real node mode so a later child row can override a parent
+  // group and turning a group on cannot leave old Never/Bypass nodes behind.
   restoreWorkflowSwitchboardModes(controller);
   for (const target of targets) {
-    if (target.enabled !== false) continue;
     nodesForWorkflowTarget(controller, target).forEach((node) => {
       const id = String(node.id);
       if (!Object.prototype.hasOwnProperty.call(saved, id)) saved[id] = Number(node.mode) || 0;
-      // Mode 4 is ComfyUI's bypass mode: it keeps existing wires intact.
-      setWorkflowNodeMode(node, 4);
+      // Mode 0 executes normally; mode 4 bypasses while preserving wires.
+      setWorkflowNodeMode(node, target.enabled !== false ? 0 : 4);
     });
   }
   controller.graph?.setDirtyCanvas?.(true, true);
@@ -3444,6 +3446,21 @@ function createWorkflowSwitchboard(controller) {
 
   const root = document.createElement("div"); root.className = "h3-workflow-switchboard";
   root.onpointerdown = (event) => event.stopPropagation();
+  // DOM widgets cover the LiteGraph canvas and otherwise swallow wheel input.
+  // Relay the complete wheel message so zooming works over the controller too.
+  root.addEventListener("wheel", (event) => {
+    const canvas = app.canvas?.canvas;
+    if (!canvas) return;
+    event.preventDefault(); event.stopPropagation();
+    canvas.dispatchEvent(new WheelEvent("wheel", {
+      bubbles: true, cancelable: true,
+      clientX: event.clientX, clientY: event.clientY,
+      screenX: event.screenX, screenY: event.screenY,
+      deltaX: event.deltaX, deltaY: event.deltaY, deltaZ: event.deltaZ,
+      deltaMode: event.deltaMode, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey,
+      altKey: event.altKey, metaKey: event.metaKey,
+    }));
+  }, { passive: false });
   const head = document.createElement("div"); head.className = "h3-ws-head";
   const headTitle = document.createElement("span"); headTitle.className = "h3-ws-title"; headTitle.textContent = "流程开关控制器";
   const headHint = document.createElement("span"); headHint.className = "h3-ws-hint"; headHint.textContent = "只添加需要控制的组 / # 节点";
