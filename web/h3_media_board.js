@@ -342,14 +342,14 @@ function injectStyle() {
     .h3-media-board .mb-setting input:disabled { opacity:.45; cursor:not-allowed; }
     .h3-media-board .mb-setting-output-value { display:flex; align-items:center; min-width:0; height:29px; padding:0 8px; overflow:hidden; border:1px solid #47656e; border-radius:5px; color:#86edf6; background:#102027; font:800 12px ui-monospace,Consolas,monospace; white-space:nowrap; }
     .h3-media-board .mb-output-summary { grid-column:1 / -1; padding:7px 9px; border-left:3px solid #69ee7a; border-radius:4px; color:#76ec87; background:#13271a; font-size:13px; font-weight:800; letter-spacing:.15px; }
-    .h3-media-board .mb-scheduler { position:relative; display:grid; grid-template-columns:repeat(2,minmax(220px,1fr)); gap:11px; margin:16px 0 2px; padding:27px 12px 11px; border:1px solid #766645; border-radius:9px; background:linear-gradient(145deg,#2b271d 0%,#1d1a15 100%); box-shadow:inset 0 1px #ffffff08,0 2px 8px #0004; }
+    .h3-media-board .mb-scheduler { position:relative; display:grid; grid-template-columns:repeat(3,minmax(180px,1fr)); gap:11px; margin:16px 0 2px; padding:27px 12px 11px; border:1px solid #766645; border-radius:9px; background:linear-gradient(145deg,#2b271d 0%,#1d1a15 100%); box-shadow:inset 0 1px #ffffff08,0 2px 8px #0004; }
     .h3-media-board .mb-scheduler-head { position:absolute; top:-11px; left:12px; display:flex; align-items:center; gap:8px; padding:3px 9px; border:1px solid #766645; border-radius:6px; color:#fff4d7; background:#2b271d; }
     .h3-media-board .mb-scheduler-title { color:#f2cf78; font-size:12px; font-weight:800; letter-spacing:.35px; }
     .h3-media-board .mb-scheduler-caption { color:#b4a584; font-size:10px; }
     .h3-media-board .mb-scheduler-field { display:grid; grid-template-columns:120px minmax(0,1fr); align-items:center; gap:8px; min-width:0; min-height:32px; padding:3px 4px 3px 8px; border:1px solid #5e533b; border-radius:7px; background:linear-gradient(90deg,#272319 0%,#191713 58%); }
     .h3-media-board .mb-scheduler-field label { overflow:hidden; color:#ded1b3; font-size:12px; font-weight:750; text-overflow:ellipsis; white-space:nowrap; }
-    .h3-media-board .mb-scheduler-field input { box-sizing:border-box; min-width:0; width:100%; height:29px; padding:4px 8px; color:#fff7e5; background:#13110e; border:1px solid #786943; border-radius:5px; outline:none; font:12px ui-monospace,Consolas,monospace; }
-    .h3-media-board .mb-scheduler-field input:focus { border-color:#efca70; box-shadow:0 0 0 2px #efca7022; }
+    .h3-media-board .mb-scheduler-field input, .h3-media-board .mb-scheduler-field select { box-sizing:border-box; min-width:0; width:100%; height:29px; padding:4px 8px; color:#fff7e5; background:#13110e; border:1px solid #786943; border-radius:5px; outline:none; font:12px ui-monospace,Consolas,monospace; }
+    .h3-media-board .mb-scheduler-field input:focus, .h3-media-board .mb-scheduler-field select:focus { border-color:#efca70; box-shadow:0 0 0 2px #efca7022; }
     .h3-media-board .mb-versions { margin:4px 0 11px; padding:7px 9px; border:1px solid #4c626a; border-radius:7px; background:#182127; }.h3-media-board .mb-versions-head { display:flex; align-items:center; gap:8px; }.h3-media-board .mb-versions-toggle { padding:0; border:0; color:#d7edf4; background:transparent; cursor:pointer; font:800 12px system-ui,sans-serif; }.h3-media-board .mb-versions-toggle:hover { color:#fff; }.h3-media-board .mb-versions-current { margin-left:auto; color:#8fa9b4; font-size:10px; }.h3-media-board .mb-versions-body { display:flex; flex-wrap:nowrap; align-items:center; gap:7px; margin-top:7px; min-width:0; }.h3-media-board .mb-versions select { flex:0 1 390px; width:390px; min-width:150px; }.h3-media-board .mb-versions select, .h3-media-board .mb-versions button { height:26px; padding:3px 7px; border:1px solid #4b626c; border-radius:4px; color:#e4eef2; background:#11191e; font:11px system-ui,sans-serif; }.h3-media-board .mb-versions button { flex:none; cursor:pointer; }.h3-media-board .mb-versions button:hover { border-color:#72d9e5; background:#1d3a43; }.h3-media-board .mb-versions button:last-child { margin-left:auto; color:#ffc6c8; border-color:#75484e; background:#2c1b20; }.h3-media-board .mb-versions button:last-child:hover { border-color:#ed7b81; color:#fff0f1; background:#47242a; }.h3-media-board .mb-versions button:disabled { cursor:not-allowed; opacity:.45; }
     /* Keep the seed controls as a compact toolbar.  The panel may be wide,
        but its controls must not stretch simply to fill available space. */
@@ -935,11 +935,17 @@ function newNoiseSeed() {
   return Math.floor(Math.random() * 9007199254740991);
 }
 
+function comboWidgetValues(widget) {
+  let values = widget?.options?.values;
+  try { if (typeof values === "function") values = values(widget); } catch { values = []; }
+  return Array.isArray(values) ? [...new Set(values.map(String).filter(Boolean))] : [];
+}
+
 function makeSchedulerPanel(widgets, node) {
   const panel = document.createElement("div"); panel.className = "mb-scheduler";
   const header = document.createElement("div"); header.className = "mb-scheduler-head";
   const title = document.createElement("span"); title.className = "mb-scheduler-title"; title.textContent = "调度器组合";
-  const caption = document.createElement("span"); caption.className = "mb-scheduler-caption"; caption.textContent = "基础步数 · 高频 Sigmas";
+  const caption = document.createElement("span"); caption.className = "mb-scheduler-caption"; caption.textContent = "基础步数 · 高频 Sigmas · K 采样器";
   header.append(title, caption); panel.appendChild(header);
   const addNumber = (name, label, minimum, fallback) => {
     const field = document.createElement("div"); field.className = "mb-scheduler-field";
@@ -959,6 +965,22 @@ function makeSchedulerPanel(widgets, node) {
   };
   addNumber("scheduler_steps", "基本调度器步数", 1, 8);
   addNumber("high_sigmas", "高频 Sigmas", 0, 5);
+  const samplerField = document.createElement("div"); samplerField.className = "mb-scheduler-field";
+  const samplerLabel = document.createElement("label"); samplerLabel.textContent = "K采样器";
+  const samplerSelect = document.createElement("select");
+  const samplerValues = comboWidgetValues(widgets.sampler_name);
+  if (!samplerValues.includes("res_multistep")) samplerValues.unshift("res_multistep");
+  samplerValues.forEach((value) => samplerSelect.appendChild(new Option(value, value)));
+  samplerSelect.value = samplerValues.includes(String(widgets.sampler_name.value))
+    ? String(widgets.sampler_name.value)
+    : "res_multistep";
+  samplerSelect.onchange = () => {
+    widgets.sampler_name.value = samplerSelect.value;
+    widgets.sampler_name.callback?.(samplerSelect.value);
+    node._h3SaveBackup?.();
+    node.graph?.setDirtyCanvas(true, true);
+  };
+  samplerField.append(samplerLabel, samplerSelect); panel.appendChild(samplerField);
   return panel;
 }
 
@@ -1406,9 +1428,13 @@ function createBoard(node) {
     node.addOutput?.("高频Sigmas", "INT");
     node.graph?.setDirtyCanvas?.(true, true);
   }
+  if (!node.outputs?.some((output) => output.name === "K采样器")) {
+    node.addOutput?.("K采样器", "SAMPLER");
+    node.graph?.setDirtyCanvas?.(true, true);
+  }
   const manifestWidget = node.widgets?.find((widget) => widget.name === "media_manifest");
   const promptWidget = node.widgets?.find((widget) => widget.name === "prompt");
-  const settingsWidgets = Object.fromEntries(["video_name", "duration", "aspect_ratio", "megapixels", "multiple", "scheduler_steps", "high_sigmas", "second_pass_scale", "second_pass_size_mode", "second_pass_megapixels", "auto_calculate", "manual_frames", "noise_seed", "noise_mode", "noise_after_generate"].map((name) => [name, node.widgets?.find((widget) => widget.name === name)]));
+  const settingsWidgets = Object.fromEntries(["video_name", "duration", "aspect_ratio", "megapixels", "multiple", "scheduler_steps", "high_sigmas", "sampler_name", "second_pass_scale", "second_pass_size_mode", "second_pass_megapixels", "auto_calculate", "manual_frames", "noise_seed", "noise_mode", "noise_after_generate"].map((name) => [name, node.widgets?.find((widget) => widget.name === name)]));
   const retryWhenWidgetsReady = () => {
     const attempts = node._h3BoardInitAttempts || 0;
     if (attempts >= 8 || node._h3BoardInitScheduled) return;
@@ -1481,6 +1507,8 @@ function createBoard(node) {
     settingsWidgets.high_sigmas.value = Number.isFinite(highSigmas) && highSigmas >= 0 && highSigmas <= 100
       ? highSigmas
       : 5;
+    const samplerValues = comboWidgetValues(settingsWidgets.sampler_name);
+    if (!samplerValues.includes(String(settingsWidgets.sampler_name.value))) settingsWidgets.sampler_name.value = "res_multistep";
   };
   repairLegacySettings();
 
@@ -3644,8 +3672,8 @@ app.registerExtension({
       // Migrate all legacy second-pass layouts. ComfyUI inserts its automatic
       // seed "after generate" widget before these fields, so their serialized
       // tail begins at index 12 and is: scale, mode, megapixels, video name,
-      // scheduler steps, high-frequency Sigmas. Older workflows omit one or
-      // both final values and receive their defaults.
+      // scheduler steps, high-frequency Sigmas, sampler name. Older workflows
+      // omit one or more final values and receive their defaults.
       for (const graphNode of graphData?.nodes || []) {
       if (graphNode?.type !== "H3MediaBoard" || !Array.isArray(graphNode.widgets_values)) continue;
       const values = graphNode.widgets_values;
@@ -3660,11 +3688,18 @@ app.registerExtension({
         || legacyTail.slice().reverse().find((value) => H3_SECOND_PASS_SIZE_MODES.has(value))
         || "倍率放大";
       const named = graphNode.widgets_values_named;
+      const samplerName = typeof named?.sampler_name === "string" && named.sampler_name.trim()
+        ? named.sampler_name
+        : typeof legacyTail[6] === "string" && legacyTail[6].trim()
+          ? legacyTail[6]
+          : "res_multistep";
       const videoName = typeof named?.video_name === "string" && named.video_name.trim()
         ? named.video_name
-        : legacyTail.findLast?.((value) => typeof value === "string"
-          && value !== "media-board" && !H3_SECOND_PASS_SIZE_MODES.has(value))
-          || "ComfyUI_";
+        : typeof legacyTail[3] === "string" && legacyTail[3].trim() && !H3_SECOND_PASS_SIZE_MODES.has(legacyTail[3])
+          ? legacyTail[3]
+          : legacyTail.findLast?.((value) => typeof value === "string"
+            && value !== "media-board" && value !== samplerName && !H3_SECOND_PASS_SIZE_MODES.has(value))
+            || "ComfyUI_";
       const namedSchedulerSteps = Math.round(Number(named?.scheduler_steps));
       const tailSchedulerSteps = Math.round(Number(legacyTail[4]));
       const schedulerSteps = Number.isFinite(namedSchedulerSteps) && namedSchedulerSteps >= 1 && namedSchedulerSteps <= 100
@@ -3682,7 +3717,7 @@ app.registerExtension({
 
       // Replace instead of inserting: this also repairs workflows already
       // saved with the former shifted strings in the numeric positions.
-      values.splice(12, values.length - 12, scale, mode, megapixels, videoName, schedulerSteps, highSigmas);
+      values.splice(12, values.length - 12, scale, mode, megapixels, videoName, schedulerSteps, highSigmas, samplerName);
 
       // Recent ComfyUI versions also persist a named copy.  Correcting only
       // widgets_values is not enough: the named values otherwise keep sending
@@ -3694,6 +3729,7 @@ app.registerExtension({
         graphNode.widgets_values_named.video_name = videoName;
         graphNode.widgets_values_named.scheduler_steps = schedulerSteps;
         graphNode.widgets_values_named.high_sigmas = highSigmas;
+        graphNode.widgets_values_named.sampler_name = samplerName;
       }
     }
   },
