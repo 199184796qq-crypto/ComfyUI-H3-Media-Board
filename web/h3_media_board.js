@@ -1557,12 +1557,19 @@ function createBoard(node) {
   applyPromptOverrides(String(promptWidget.value || ""));
   root.onpointerdown = (event) => { if (!prompt.contains(event.target)) root.focus({ preventScroll: true }); };
   // DOM widgets sit above LiteGraph's canvas, so their children normally eat
-  // the wheel event.  Relay it to the real canvas and keep zoom behaviour the
-  // same whether the pointer is on a card, the prompt, or a settings control.
+  // the wheel event. Ctrl+wheel inside the prompt is reserved for reading its
+  // long text; every other wheel gesture continues to control the canvas.
   root.addEventListener("wheel", (event) => {
     // The @ picker is deliberately the exception: it has its own fixed-height
     // list, so wheel input over it must scroll its media choices.
     if (event.target.closest?.(".mb-mention-menu")) return;
+    const promptEditor = event.target.closest?.(".mb-prompt-editor");
+    if (event.ctrlKey && promptEditor) {
+      event.preventDefault(); event.stopPropagation();
+      const unit = event.deltaMode === 1 ? 18 : event.deltaMode === 2 ? promptEditor.clientHeight : 1;
+      promptEditor.scrollTop += event.deltaY * unit;
+      return;
+    }
     const canvasElement = app.canvas?.canvas;
     if (!canvasElement) return;
     event.preventDefault(); event.stopPropagation();
