@@ -409,12 +409,14 @@ def _h3_settings(duration: float, aspect_ratio: str, megapixels: float, multiple
         second_pass_width = round(width_ratio * second_scale / multiple) * multiple
         second_pass_height = round(height_ratio * second_scale / multiple) * multiple
         second_pass_effective_scale = second_pass_width / max(1, width)
+        second_pass_output_value = second_pass_megapixels
     else:
         second_pass_width = max(multiple, round(width * second_pass_scale / multiple) * multiple)
         second_pass_height = max(multiple, round(height * second_pass_scale / multiple) * multiple)
         # Preserve the existing FLOAT output value for old scale-based
         # workflows. Direct-megapixel mode uses its computed ratio instead.
         second_pass_effective_scale = second_pass_scale
+        second_pass_output_value = second_pass_scale
     base_frames = max(5, round(duration * 24))
     calculated_frames = base_frames + (5 - base_frames % 17) % 17
     frames = calculated_frames if auto_calculate else max(1, int(manual_frames))
@@ -427,6 +429,7 @@ def _h3_settings(duration: float, aspect_ratio: str, megapixels: float, multiple
         "second_pass_width": second_pass_width,
         "second_pass_height": second_pass_height,
         "second_pass_effective_scale": second_pass_effective_scale,
+        "second_pass_output_value": second_pass_output_value,
         "width": width, "height": height, "frames": frames,
     }
 
@@ -500,7 +503,7 @@ class H3MediaBoard:
         }
 
     RETURN_TYPES = ("H3_MEDIA_BOARD", "NOISE", "FLOAT", "STRING", "INT", "INT", "SAMPLER")
-    RETURN_NAMES = ("media_board", "noise", "2采放大倍数", "视频名称", "调度器步数", "高频Sigmas", "K采样器")
+    RETURN_NAMES = ("media_board", "noise", "放大倍数", "视频名称", "调度器步数", "高频Sigmas", "K采样器")
     FUNCTION = "collect"
     CATEGORY = "H3 / Media"
 
@@ -554,13 +557,30 @@ class H3MediaBoard:
         noise = _H3SeedNoise(effective_seed)
         sampler = comfy.samplers.sampler_object(resolved_sampler_name)
         runtime_manifest["_noise_object"] = noise
-        # Keep all existing output indexes stable. The direct-megapixel field
-        # remains display-only. Appended outputs are shared values that can be
-        # fanned out without moving any existing output index.
+        print(
+            "\n[H3-Media-Board] 当前生成参数"
+            f"\n  视频名称: {resolved_video_name}"
+            f"\n  时长: {settings['duration']} 秒"
+            f"\n  宽高比: {settings['aspect_ratio']}"
+            f"\n  原始百万像素: {settings['megapixels']}"
+            f"\n  对齐倍数: {settings['multiple']}"
+            f"\n  自动计算帧数: {settings['auto_calculate']}"
+            f"\n  手动帧数: {settings['manual_frames']}"
+            f"\n  实际输出: {settings['width']} x {settings['height']} / {settings['frames']} 帧"
+            f"\n  放大尺寸方式: {settings['second_pass_size_mode']}"
+            f"\n  放大输入值: {settings['second_pass_output_value']}"
+            f"\n  放大输出尺寸: {settings['second_pass_width']} x {settings['second_pass_height']}"
+            f"\n  基本调度器步数: {resolved_scheduler_steps}"
+            f"\n  高频 Sigmas: {resolved_high_sigmas}"
+            f"\n  K采样器: {resolved_sampler_name}",
+            flush=True,
+        )
+        # Keep all existing output indexes stable. The third output now returns
+        # the active size field exactly as entered: multiplier or megapixels.
         return {
             "ui": {"h3_media_board": [manifest]},
             "result": (
-                runtime_manifest, noise, float(settings["second_pass_scale"]), resolved_video_name,
+                runtime_manifest, noise, float(settings["second_pass_output_value"]), resolved_video_name,
                 resolved_scheduler_steps, resolved_high_sigmas, sampler,
             ),
         }
@@ -588,7 +608,7 @@ class H3MediaBoardUnpack:
         + [f"video_{index}" for index in range(1, 4)]
         + [f"video_audio_{index}" for index in range(1, 4)]
         + [f"audio_{index}" for index in range(1, 4)]
-        + ["prompt", "duration", "width", "height", "frames", "noise", "2采放大倍数"]
+        + ["prompt", "duration", "width", "height", "frames", "noise", "放大倍数"]
     )
     FUNCTION = "unpack"
     CATEGORY = "H3 / Media"
@@ -620,7 +640,7 @@ class H3MediaBoardUnpack:
             noise = _H3SeedNoise(int(noise_settings.get("effective_seed", noise_settings.get("seed", 0))))
         return tuple(images + videos + video_audios + audios + [
             str(media_board.get("prompt", "")), params["duration"], params["width"], params["height"], params["frames"], noise,
-            float(params["second_pass_scale"]),
+            float(params["second_pass_output_value"]),
         ])
 
 

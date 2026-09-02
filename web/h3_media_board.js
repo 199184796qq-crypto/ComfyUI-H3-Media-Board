@@ -1416,8 +1416,13 @@ function createBoard(node) {
   injectStyle();
   // Workflows saved before the second-pass scale existed have only the first
   // two ports. Append the new FLOAT port without changing either old index.
-  if (!node.outputs?.some((output) => output.name === "2采放大倍数")) {
-    node.addOutput?.("2采放大倍数", "FLOAT");
+  const legacyScaleOutput = node.outputs?.find((output) => output.name === "2采放大倍数");
+  if (legacyScaleOutput) {
+    legacyScaleOutput.name = "放大倍数";
+    legacyScaleOutput.label = "放大倍数";
+  }
+  if (!node.outputs?.some((output) => output.name === "放大倍数")) {
+    node.addOutput?.("放大倍数", "FLOAT");
     node.graph?.setDirtyCanvas?.(true, true);
   }
   if (!node.outputs?.some((output) => output.name === "调度器步数")) {
