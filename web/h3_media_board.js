@@ -106,7 +106,7 @@ function setupRestartReconnect() {
 }
 
 function h3Settings(duration, aspectRatio, megapixels, multiple, secondPassScale = 1, autoCalculate = true, manualFrames = 362, secondPassSizeMode = "倍率放大", secondPassMegapixels = 1) {
-  const seconds = Math.min(15, Math.max(4, Number(duration) || 15));
+  const seconds = Math.min(30, Math.max(4, Number(duration) || 15));
   const mp = Number(Math.min(16, Math.max(0.1, Number(megapixels) || 0.4)).toFixed(1));
   const align = Math.min(128, Math.max(8, Math.round(Number(multiple) || 32)));
   const scaleFactor = Number(Math.min(4, Math.max(1, Number(secondPassScale) || 1)).toFixed(1));
@@ -166,7 +166,7 @@ function promptH3Overrides(prompt) {
     const seconds = Number(match[1]);
     // Ignore reference alignment markers such as "0.00 seconds".
     if (seconds < 4) continue;
-    result.duration = Math.min(15, Math.round(seconds * 2) / 2);
+    result.duration = Math.min(30, Math.max(4, Math.round(seconds * 2) / 2));
     break;
   }
   return result;
@@ -815,7 +815,7 @@ function makeH3SettingsPanel(widgets, node, promptWidget) {
     return input;
   };
   createControl("video_name", "视频名称", "text", { value: "ComfyUI_" });
-  createControl("duration", "时长", "number", { min: 4, max: 15, step: 0.5 });
+  createControl("duration", "时长", "number", { min: 4, max: 30, step: 0.5 });
   aspectRatioInput = createControl("aspect_ratio", "宽高比", "select");
   createControl("megapixels", "原始百万像素", "number", { min: 0.1, max: 16, step: 0.1, decimals: 1 });
   createControl("multiple", "倍数", "number", { min: 8, max: 128, step: 4 });

@@ -66,8 +66,8 @@ def _prompt_h3_overrides(prompt: str | None) -> dict[str, float | str]:
         # "0.00 seconds". They are not a requested video duration.
         if seconds < 4.0:
             continue
-        # H3 accepts 4–15 seconds in 0.5-second increments.
-        result["duration"] = min(15.0, max(4.0, round(seconds * 2) / 2))
+        # This board accepts 4–30 seconds in 0.5-second increments.
+        result["duration"] = min(30.0, max(4.0, round(seconds * 2) / 2))
         break
     return result
 
@@ -389,7 +389,7 @@ def _h3_settings(duration: float, aspect_ratio: str, megapixels: float, multiple
                  manual_frames: int = 362, second_pass_size_mode: str = "倍率放大",
                  second_pass_megapixels: float = 1.0) -> dict[str, int | float | str | bool]:
     """Match H3 Resolution Selector: MP × 1024² → ratio → nearest multiple."""
-    duration = min(15.0, max(4.0, float(duration)))
+    duration = min(30.0, max(4.0, float(duration)))
     megapixels = round(min(16.0, max(0.1, float(megapixels))), 1)
     multiple = min(128, max(8, int(multiple)))
     second_pass_scale = round(min(4.0, max(1.0, float(second_pass_scale))), 1)
@@ -470,7 +470,7 @@ class H3MediaBoard:
             "required": {
                 "prompt": ("STRING", {"multiline": True, "default": ""}),
                 "media_manifest": ("STRING", {"default": "{}", "multiline": False}),
-                "duration": ("FLOAT", {"default": 15.0, "min": 4.0, "max": 15.0, "step": 0.5}),
+                "duration": ("FLOAT", {"default": 15.0, "min": 4.0, "max": 30.0, "step": 0.5}),
                 "aspect_ratio": (list(ASPECT_RATIOS.keys()), {"default": "9:16"}),
                 "megapixels": ("FLOAT", {"default": 0.4, "min": 0.1, "max": 16.0, "step": 0.1}),
                 "multiple": ("INT", {"default": 32, "min": 8, "max": 128, "step": 4}),
