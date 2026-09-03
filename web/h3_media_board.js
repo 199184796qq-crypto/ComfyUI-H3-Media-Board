@@ -1346,6 +1346,9 @@ function makePromptEditor(promptWidget, node, getState, saveBackup, onPromptChan
   });
   makeAction("粘贴", "mb-prompt-action-paste", async (event) => {
     stop(event);
+    // Paste is an overwrite action for the prompt editor. Clear first so the
+    // clipboard-permission fallback (Ctrl+V) also starts from an empty prompt.
+    setPromptText("", true);
     try {
       const value = await navigator.clipboard?.readText();
       if (typeof value !== "string") throw new Error("clipboard text unavailable");
