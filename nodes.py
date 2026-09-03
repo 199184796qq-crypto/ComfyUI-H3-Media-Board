@@ -34,6 +34,14 @@ ASPECT_RATIOS = {
 }
 MAX_SEED = 0x1FFFFFFFFFFFFF  # Exact integer range supported by browser number inputs.
 _LAST_QUEUED_SEEDS: dict[str, int] = {}
+H3MB_VARIABLE_NAMES = (
+    "H3mb_noise",
+    "H3mb_upscale_factor",
+    "H3mb_video_name",
+    "H3mb_scheduler_steps",
+    "H3mb_high_frequency_sigmas",
+    "H3mb_sampler",
+)
 
 
 def _prompt_h3_overrides(prompt: str | None) -> dict[str, float | str]:
@@ -584,6 +592,42 @@ class H3MediaBoard:
                 resolved_scheduler_steps, resolved_high_sigmas, sampler,
             ),
         }
+
+
+class H3MediaBoardVariableGet:
+    """Read one typed value from the active H3 Media Board without a visible wire.
+
+    The frontend resolves the selected variable to the matching board output when
+    the prompt is serialized.  Keeping the value as a real graph dependency (and
+    not in a process-global dictionary) preserves execution order, cache
+    invalidation and isolation between queued workflows.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "variable": (list(H3MB_VARIABLE_NAMES), {"default": "H3mb_noise"}),
+            },
+            "optional": {
+                # This socket is removed from the visible canvas by the bundled
+                # extension.  The serialized prompt receives its virtual link.
+                "_h3mb_value": ("*", {"forceInput": True}),
+            },
+        }
+
+    RETURN_TYPES = ("*",)
+    RETURN_NAMES = ("H3mb_noise",)
+    FUNCTION = "get_value"
+    CATEGORY = "H3 / 工具"
+    DESCRIPTION = "选择一个 H3mb_ 内置变量，并输出当前 H3 Media Board 对应插口的原始值。"
+
+    def get_value(self, variable: str, _h3mb_value: Any = None):
+        if variable not in H3MB_VARIABLE_NAMES:
+            raise ValueError(f"未知的 H3mb 内置变量: {variable}")
+        if _h3mb_value is None:
+            raise RuntimeError("没有找到可用的 H3 Media Board；请在同一工作流中添加并启用主节点。")
+        return (_h3mb_value,)
 
 
 class H3MediaBoardUnpack:
@@ -1209,6 +1253,7 @@ class H3WorkflowSwitchboard:
 
 NODE_CLASS_MAPPINGS = {
     "H3MediaBoard": H3MediaBoard,
+    "H3MediaBoardVariableGet": H3MediaBoardVariableGet,
     "H3MediaBoardUnpack": H3MediaBoardUnpack,
     "H3ConditionLatentSwitch": H3ConditionLatentSwitch,
     "H3VideoModeControl": H3VideoModeControl,
@@ -1222,6 +1267,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "H3MediaBoard": "H3 Media Board (9 Image / 3 Audio / 3 Video)",
+    "H3MediaBoardVariableGet": "获取 H3mb 内置变量",
     "H3MediaBoardUnpack": "H3 Media Board Outputs",
     "H3ConditionLatentSwitch": "H3 条件与 Latent 切换",
     "H3VideoModeControl": "H3 生视频模式控制",

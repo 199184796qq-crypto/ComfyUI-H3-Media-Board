@@ -4,6 +4,7 @@
 
 - `H3 Media Board (9 Image / 3 Audio / 3 Video)`：9 张图、3 段音频、3 个视频、提示词，以及内嵌的 H3 时长、画幅、百万像素与倍数设置。可选择自动计算对齐帧数，或关闭后手动输入帧数；还可设置固定、每次排队随机或复用上次的 Noise 种子。
 - `H3 Media Board Outputs`：接收上方节点唯一的 `media_board` 输出，提供参考图片、视频帧批次、视频音频、音频、提示词、`duration`、`width`、`height`、`frames`，以及可直接连接 `SamplerCustomAdvanced` 的 `noise` 输出；未放入媒体的位置返回空值，前端会标记为未激活。
+- `获取 H3mb 内置变量`：无需从主节点拉长连线。下拉选择 `H3mb_noise`、`H3mb_upscale_factor`、`H3mb_video_name`、`H3mb_scheduler_steps`、`H3mb_high_frequency_sigmas` 或 `H3mb_sampler`，输出口会同步切换名称和类型，并在排队时读取同一工作流中的 H3 Media Board 当前值。
 - `H3 条件与 Latent 切换`：同时接入 H3 图文/图生节点与 H3 多参参考节点各自的“正向条件 + Latent”。开关打开时仅执行并输出图文/图生分支，关闭时仅执行并输出多参参考分支；未选中的 H3 分支及其上游媒体拆分会被懒执行机制跳过。`external_switch` 接口可由上游布尔节点控制，并优先于本地开关。
 - `H3 生视频模式控制`：紧凑的图文／图生、 多参参考双态控制节点。除“模式开关”外，它还提供 `media_board` 输入和原样转发的 `media_board` 输出；将其“模式开关”输出接到 **H3 条件与 Latent 切换** 的 `external_switch`，即可统一控制整套 H3 分支。
 - `H3 二采准备（高分条件 / 注入帧）`：接收二采前已放大并重新合并的 H3 AV latent，自动按它的最终尺寸重建图文或多参条件，并输出专用的二采条件与 latent。接入图片、帧串或音频后会自动展开下一组时间点；最多 12 组，可在一个节点内完成多段关键帧／声音注入。

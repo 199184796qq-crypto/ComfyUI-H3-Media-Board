@@ -15,6 +15,16 @@ const H3_RATIOS = {
   "1:1": [1, 1], "2:3": [2, 3], "3:2": [3, 2], "3:4": [3, 4],
   "4:3": [4, 3], "9:16": [9, 16], "16:9": [16, 9], "21:9": [21, 9],
 };
+const H3MB_VARIABLE_SPECS = Object.freeze({
+  H3mb_noise: { type: "NOISE", slot: 1 },
+  H3mb_upscale_factor: { type: "FLOAT", slot: 2 },
+  H3mb_video_name: { type: "STRING", slot: 3 },
+  H3mb_scheduler_steps: { type: "INT", slot: 4 },
+  H3mb_high_frequency_sigmas: { type: "INT", slot: 5 },
+  H3mb_sampler: { type: "SAMPLER", slot: 6 },
+});
+const H3MB_SOURCE_NODE_PROPERTY = "h3mb_source_node_id";
+const H3MB_VALUE_INPUT = "_h3mb_value";
 
 function tagTopToolbarActions() {
   const buttons = [...document.querySelectorAll("button")];
@@ -241,6 +251,122 @@ function restoreBoardWorkflowState(node, configured = null) {
   node._h3SetPromptText?.(promptWidget?.value || "");
   node._h3RenderBoard?.();
   node.graph?.setDirtyCanvas?.(true, true);
+}
+
+function h3mbVariableSpec(node) {
+  const name = String(node?.widgets?.find((widget) => widget.name === "variable")?.value || "H3mb_noise");
+  return { name, ...(H3MB_VARIABLE_SPECS[name] || H3MB_VARIABLE_SPECS.H3mb_noise) };
+}
+
+function h3mbGraphLink(graph, linkId) {
+  return graph?.getLink?.(linkId) || graph?.links?.[linkId] || null;
+}
+
+function h3mbTypesCompatible(sourceType, targetType) {
+  if (!targetType || targetType === "*" || sourceType === "*") return true;
+  return String(targetType).split(",").map((item) => item.trim()).includes(sourceType);
+}
+
+function activeH3MediaBoards(node) {
+  return (node?.graph?._nodes || []).filter((candidate) => {
+    if (candidate === node || (candidate.comfyClass !== "H3MediaBoard" && candidate.type !== "H3MediaBoard")) return false;
+    // LiteGraph modes 2 and 4 are Never and Bypass. A bypassed media board
+    // cannot provide these typed outputs, so never bind a getter to it.
+    return ![2, 4].includes(Number(candidate.mode));
+  });
+}
+
+function resolveH3MediaBoardSource(node) {
+  const boards = activeH3MediaBoards(node);
+  if (!boards.length) return null;
+  node.properties = node.properties || {};
+  const savedId = node.properties[H3MB_SOURCE_NODE_PROPERTY];
+  const saved = boards.find((board) => String(board.id) === String(savedId));
+  if (saved) return saved;
+
+  // A workflow normally contains one board. If there are several, bind to the
+  // closest board on the left, falling back to the closest board overall. The
+  // chosen id is persisted so moving nodes later does not silently retarget it.
+  const getterX = Number(node.pos?.[0]) || 0;
+  const preceding = boards.filter((board) => (Number(board.pos?.[0]) || 0) <= getterX);
+  const candidates = preceding.length ? preceding : boards;
+  const getterY = Number(node.pos?.[1]) || 0;
+  const selected = candidates.slice().sort((left, right) => {
+    const leftDistance = ((Number(left.pos?.[0]) || 0) - getterX) ** 2
+      + ((Number(left.pos?.[1]) || 0) - getterY) ** 2;
+    const rightDistance = ((Number(right.pos?.[0]) || 0) - getterX) ** 2
+      + ((Number(right.pos?.[1]) || 0) - getterY) ** 2;
+    return leftDistance - rightDistance;
+  })[0];
+  node.properties[H3MB_SOURCE_NODE_PROPERTY] = String(selected.id);
+  return selected;
+}
+
+function updateH3VariableGet(node) {
+  const output = node?.outputs?.[0];
+  if (!output) return;
+  const spec = h3mbVariableSpec(node);
+  const previousType = output.type;
+  output.name = spec.name;
+  output.localized_name = spec.name;
+  output.type = spec.type;
+
+  // Changing the dropdown changes the real data type. Retain valid links and
+  // remove incompatible ones instead of leaving a workflow that fails later.
+  for (const linkId of [...(output.links || [])]) {
+    const link = h3mbGraphLink(node.graph, linkId);
+    const target = link ? node.graph?.getNodeById?.(link.target_id) : null;
+    const targetType = target?.inputs?.[link?.target_slot]?.type;
+    if (!h3mbTypesCompatible(spec.type, targetType)) node.graph?.removeLink?.(linkId);
+    else if (link && previousType !== spec.type) link.type = spec.type;
+  }
+  node.title = "获取 H3mb 内置变量";
+  node.graph?.setDirtyCanvas?.(true, true);
+}
+
+function decorateH3VariableGet(node) {
+  const hiddenInputIndex = node.inputs?.findIndex((input) => input.name === H3MB_VALUE_INPUT) ?? -1;
+  if (hiddenInputIndex >= 0) node.removeInput?.(hiddenInputIndex);
+  if (node._h3mbVariableGetDecorated) {
+    updateH3VariableGet(node);
+    return;
+  }
+  const widget = node.widgets?.find((item) => item.name === "variable");
+  if (!widget) return;
+  node._h3mbVariableGetDecorated = true;
+  const priorCallback = widget.callback;
+  widget.callback = function (...args) {
+    const result = priorCallback?.apply(this, args);
+    updateH3VariableGet(node);
+    return result;
+  };
+  updateH3VariableGet(node);
+  const computed = node.computeSize?.() || node.size || [280, 90];
+  node.setSize?.([Math.max(280, Number(computed[0]) || 280), Math.max(74, Number(computed[1]) || 90)]);
+}
+
+function installH3VariablePromptResolver() {
+  if (app._h3mbVariablePromptResolverInstalled) return;
+  app._h3mbVariablePromptResolverInstalled = true;
+  const originalGraphToPrompt = app.graphToPrompt.bind(app);
+  app.graphToPrompt = async function (...args) {
+    const prompt = await originalGraphToPrompt(...args);
+    const graph = args[0] || app.graph;
+    for (const getter of graph?._nodes || []) {
+      if (getter.comfyClass !== "H3MediaBoardVariableGet" && getter.type !== "H3MediaBoardVariableGet") continue;
+      const getterPrompt = prompt?.output?.[String(getter.id)];
+      if (!getterPrompt) continue;
+      const source = resolveH3MediaBoardSource(getter);
+      if (!source || !prompt.output?.[String(source.id)]) {
+        console.warn(`[H3-Media-Board] ${getter.title} #${getter.id} 没有找到可用的 H3 Media Board。`);
+        continue;
+      }
+      const spec = h3mbVariableSpec(getter);
+      getterPrompt.inputs = getterPrompt.inputs || {};
+      getterPrompt.inputs[H3MB_VALUE_INPUT] = [String(source.id), spec.slot];
+    }
+    return prompt;
+  };
 }
 
 function injectStyle() {
@@ -3751,6 +3877,7 @@ app.registerExtension({
   setup() {
     setupTopToolbarActionsVisibility();
     setupRestartReconnect();
+    installH3VariablePromptResolver();
   },
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData?.name === "H3MediaBoard") {
@@ -3775,6 +3902,7 @@ app.registerExtension({
   },
   nodeCreated(node) {
     if (node.comfyClass === "H3MediaBoard") createBoard(node);
+    if (node.comfyClass === "H3MediaBoardVariableGet") requestAnimationFrame(() => decorateH3VariableGet(node));
     if (node.comfyClass === "DynamicMediaBoard") createDynamicMediaBoard(node);
     if (node.comfyClass === "H3MediaBoardUnpack") decorateUnpacker(node);
     if (node.comfyClass === "H3ConditionLatentSwitch") decorateConditionLatentSwitch(node);
@@ -3789,6 +3917,9 @@ app.registerExtension({
     }
   },
   loadedGraphNode(node) {
+    if (node.comfyClass === "H3MediaBoardVariableGet") {
+      requestAnimationFrame(() => decorateH3VariableGet(node));
+    }
     if (node.comfyClass === "H3ConditionLatentSwitch") {
       requestAnimationFrame(() => decorateConditionLatentSwitch(node));
     }
