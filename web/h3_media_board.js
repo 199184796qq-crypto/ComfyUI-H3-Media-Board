@@ -16,6 +16,7 @@ const H3_RATIOS = {
   "4:3": [4, 3], "9:16": [9, 16], "16:9": [16, 9], "21:9": [21, 9],
 };
 const H3MB_VARIABLE_SPECS = Object.freeze({
+  mediaBorad: { type: "H3_MEDIA_BOARD", slot: 1, sourceClass: "H3VideoModeControl" },
   H3mb_noise: { type: "NOISE", slot: 1 },
   H3mb_upscale_factor: { type: "FLOAT", slot: 2 },
   H3mb_video_name: { type: "STRING", slot: 3 },
@@ -268,8 +269,9 @@ function h3mbTypesCompatible(sourceType, targetType) {
 }
 
 function activeH3MediaBoards(node) {
+  const sourceClass = h3mbVariableSpec(node).sourceClass || "H3MediaBoard";
   return (node?.graph?._nodes || []).filter((candidate) => {
-    if (candidate === node || (candidate.comfyClass !== "H3MediaBoard" && candidate.type !== "H3MediaBoard")) return false;
+    if (candidate === node || (candidate.comfyClass !== sourceClass && candidate.type !== sourceClass)) return false;
     // LiteGraph modes 2 and 4 are Never and Bypass. A bypassed media board
     // cannot provide these typed outputs, so never bind a getter to it.
     return ![2, 4].includes(Number(candidate.mode));
@@ -280,7 +282,8 @@ function resolveH3MediaBoardSource(node) {
   const boards = activeH3MediaBoards(node);
   if (!boards.length) return null;
   node.properties = node.properties || {};
-  const savedId = node.properties[H3MB_SOURCE_NODE_PROPERTY];
+  const sourceKey = h3mbVariableSpec(node).name === "mediaBorad" ? "h3mb_mode_control_source_node_id" : H3MB_SOURCE_NODE_PROPERTY;
+  const savedId = node.properties[sourceKey];
   const saved = boards.find((board) => String(board.id) === String(savedId));
   if (saved) return saved;
 
@@ -298,7 +301,7 @@ function resolveH3MediaBoardSource(node) {
       + ((Number(right.pos?.[1]) || 0) - getterY) ** 2;
     return leftDistance - rightDistance;
   })[0];
-  node.properties[H3MB_SOURCE_NODE_PROPERTY] = String(selected.id);
+  node.properties[sourceKey] = String(selected.id);
   return selected;
 }
 
@@ -940,7 +943,7 @@ function makeH3SettingsPanel(widgets, node, promptWidget) {
     field.append(caption, input); panel.appendChild(field);
     return input;
   };
-  createControl("video_name", "视频名称", "text", { value: "ComfyUI_" });
+  createControl("video_name", "视频名称", "text", { value: "video/ComfyUi_" });
   createControl("duration", "时长", "number", { min: 4, max: 30, step: 0.5 });
   aspectRatioInput = createControl("aspect_ratio", "宽高比", "select");
   createControl("megapixels", "原始百万像素", "number", { min: 0.1, max: 16, step: 0.1, decimals: 1 });
@@ -1632,7 +1635,7 @@ function createBoard(node) {
     if (settingsWidgets.second_pass_size_mode.value !== "百万原始") settingsWidgets.second_pass_size_mode.value = "倍率放大";
     const secondMegapixels = Number(settingsWidgets.second_pass_megapixels.value);
     if (!Number.isFinite(secondMegapixels) || secondMegapixels < 0.1 || secondMegapixels > 16) settingsWidgets.second_pass_megapixels.value = 1.0;
-    if (typeof settingsWidgets.video_name.value !== "string" || !settingsWidgets.video_name.value.trim()) settingsWidgets.video_name.value = "ComfyUI_";
+    if (typeof settingsWidgets.video_name.value !== "string" || !settingsWidgets.video_name.value.trim()) settingsWidgets.video_name.value = "video/ComfyUi_";
     const schedulerSteps = Math.round(Number(settingsWidgets.scheduler_steps.value));
     settingsWidgets.scheduler_steps.value = Number.isFinite(schedulerSteps) && schedulerSteps >= 1 && schedulerSteps <= 100
       ? schedulerSteps
@@ -1915,6 +1918,39 @@ function createBoard(node) {
         node._h3VersionSelection = "current"; saveVersions(versions); render();
       };
       body.append(select, load, add, remove); panel.appendChild(body);
+      const actions = document.createElement("div"); actions.className = "mb-versions-body";
+      actions.style.flexWrap = "wrap";
+      const clearVersions = document.createElement("button");
+      clearVersions.type = "button"; clearVersions.textContent = "清除所有保存版本";
+      clearVersions.title = "清除本节点手动保存的全部版本，保留当前素材和参数。";
+      clearVersions.disabled = versions.entries.length === 0;
+      clearVersions.onclick = (event) => {
+        stop(event);
+        const latest = readVersions();
+        latest.entries = [];
+        node._h3VersionSelection = "current";
+        saveVersions(latest); saveBackup(); render();
+        node.graph?.setDirtyCanvas?.(true, true);
+      };
+      const reset = document.createElement("button");
+      reset.type = "button"; reset.textContent = "清空上传并恢复默认参数";
+      reset.title = "清空本节点的图片、音频、视频和提示词，恢复默认参数；保留已保存版本和磁盘文件。";
+      reset.onclick = (event) => {
+        stop(event);
+        node._h3VersionSelection = "current";
+        applyVersion({ snapshot: {
+          media_manifest: "{}", prompt: "",
+          settings: {
+            video_name: "video/ComfyUi_", duration: 15, aspect_ratio: "9:16",
+            megapixels: 0.4, multiple: 32, scheduler_steps: 8, high_sigmas: 5,
+            sampler_name: "res_multistep", second_pass_scale: 1,
+            second_pass_size_mode: "倍率放大", second_pass_megapixels: 1,
+            auto_calculate: true, manual_frames: 362, noise_seed: 0,
+            noise_mode: "fixed", noise_after_generate: "randomize",
+          },
+        } });
+      };
+      actions.append(clearVersions, reset); panel.appendChild(actions);
     }
     root.appendChild(panel);
   };
@@ -3839,7 +3875,7 @@ app.registerExtension({
           ? legacyTail[3]
           : legacyTail.findLast?.((value) => typeof value === "string"
             && value !== "media-board" && value !== samplerName && !H3_SECOND_PASS_SIZE_MODES.has(value))
-            || "ComfyUI_";
+            || "video/ComfyUi_";
       const namedSchedulerSteps = Math.round(Number(named?.scheduler_steps));
       const tailSchedulerSteps = Math.round(Number(legacyTail[4]));
       const schedulerSteps = Number.isFinite(namedSchedulerSteps) && namedSchedulerSteps >= 1 && namedSchedulerSteps <= 100

@@ -36,6 +36,7 @@ ASPECT_RATIOS = {
 MAX_SEED = 0x1FFFFFFFFFFFFF  # Exact integer range supported by browser number inputs.
 _LAST_QUEUED_SEEDS: dict[str, int] = {}
 H3MB_VARIABLE_NAMES = (
+    "mediaBorad",
     "H3mb_noise",
     "H3mb_upscale_factor",
     "H3mb_video_name",
@@ -499,7 +500,7 @@ class H3MediaBoard:
                 "second_pass_megapixels": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 16.0, "step": 0.01}),
                 # Append new UI fields so older workflows keep their fixed
                 # widget positions.
-                "video_name": ("STRING", {"default": "ComfyUI_", "multiline": False}),
+                "video_name": ("STRING", {"default": "video/ComfyUi_", "multiline": False}),
                 "scheduler_steps": ("INT", {"default": 8, "min": 1, "max": 100, "step": 1}),
                 "high_sigmas": ("INT", {"default": 5, "min": 0, "max": 100, "step": 1}),
                 "sampler_name": (comfy.samplers.SAMPLER_NAMES, {"default": "res_multistep"}),
@@ -526,7 +527,7 @@ class H3MediaBoard:
                 noise_seed: int, noise_mode: str, external_prompt: str | None = None,
                 unique_id: str | None = None, noise_after_generate: str = "randomize",
                 second_pass_scale: float = 1.0, second_pass_size_mode: str = "倍率放大",
-                second_pass_megapixels: float = 1.0, video_name: str = "ComfyUI_",
+                second_pass_megapixels: float = 1.0, video_name: str = "video/ComfyUi_",
                 scheduler_steps: int = 8, high_sigmas: int = 5,
                 sampler_name: str = "res_multistep"):
         manifest = _clean_manifest(media_manifest)
@@ -547,8 +548,8 @@ class H3MediaBoard:
         }
         # Keep the raw prefix exactly as entered; save-video nodes can append
         # their own counter/extension. Empty input falls back to the familiar
-        # ComfyUI_ prefix instead of producing an unnamed file.
-        resolved_video_name = str(video_name or "ComfyUI_")
+        # video/ComfyUi_ prefix instead of producing an unnamed file.
+        resolved_video_name = str(video_name or "video/ComfyUi_")
         resolved_scheduler_steps = min(100, max(1, int(scheduler_steps)))
         resolved_high_sigmas = min(100, max(0, int(high_sigmas)))
         resolved_sampler_name = str(sampler_name)
@@ -621,7 +622,7 @@ class H3MediaBoardVariableGet:
     RETURN_NAMES = ("H3mb_noise",)
     FUNCTION = "get_value"
     CATEGORY = "H3 / 工具"
-    DESCRIPTION = "选择一个 H3mb_ 内置变量，并输出当前 H3 Media Board 对应插口的原始值。"
+    DESCRIPTION = "选择 H3mb 内置变量；mediaBorad 获取 H3 生视频模式控制的 media_board 输出，其余变量获取素材板对应输出。"
 
     def get_value(self, variable: str, _h3mb_value: Any = None):
         if variable not in H3MB_VARIABLE_NAMES:
