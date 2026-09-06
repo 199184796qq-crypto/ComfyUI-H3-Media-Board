@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 import torch
 import comfy.samplers
+import comfy.utils
 from aiohttp import web
 from PIL import Image, ImageOps
 
@@ -639,7 +640,14 @@ class H3MediaBoardUnpack:
 
     @classmethod
     def INPUT_TYPES(cls):
-        return {"required": {"media_board": ("H3_MEDIA_BOARD",)}}
+        return {
+            "required": {"media_board": ("H3_MEDIA_BOARD",)},
+            "optional": {
+                "ref_image_size": (["match"] + [f"{n / 10:.1f}" for n in range(12, 32)] + ["max"], {
+                    "default": "max", "tooltip": "match：输出面积；数字：输出面积 × 倍率；max：保持原图。等比缩小，不放大。下游官方参考图像尺寸请选择 max。",
+                }),
+            },
+        }
 
     # Order mirrors H3's reference inputs: images → videos → video audio → audio.
     # H3's ref_videos ports take IMAGE frame batches, not ComfyUI VIDEO objects.
@@ -657,7 +665,7 @@ class H3MediaBoardUnpack:
     FUNCTION = "unpack"
     CATEGORY = "H3 / Media"
 
-    def unpack(self, media_board: dict[str, Any]):
+    def unpack(self, media_board: dict[str, Any], ref_image_size="max"):
         manifest = _clean_manifest(media_board)
         # image[0] and image[1] are H3's first/last frame positions.  A None
         # at image[0] must remain a real empty first-frame socket instead of
@@ -678,6 +686,20 @@ class H3MediaBoardUnpack:
             settings.get("manual_frames", 362), settings.get("second_pass_size_mode", "倍率放大"),
             settings.get("second_pass_megapixels", 1.0),
         )
+        if ref_image_size != "max":
+            multiplier = 1.0 if ref_image_size == "match" else float(ref_image_size)
+            target_area = params["width"] * params["height"] * multiplier
+            for index, image in enumerate(images):
+                if image is None:
+                    continue
+                h, w = image.shape[1:3]
+                scale = min(1.0, math.sqrt(target_area / (w * h)))
+                if scale < 1.0:
+                    tw = max(32, round(w * scale / 32) * 32)
+                    th = max(32, round(h * scale / 32) * 32)
+                    images[index] = comfy.utils.common_upscale(
+                        image.movedim(-1, 1), tw, th, "lanczos", "disabled",
+                    ).movedim(1, -1)
         noise_settings = settings.get("noise", {}) if isinstance(settings, dict) else {}
         noise = media_board.get("_noise_object") if isinstance(media_board, dict) else None
         if noise is None:
