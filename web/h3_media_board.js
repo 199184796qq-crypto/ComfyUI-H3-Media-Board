@@ -2959,13 +2959,13 @@ function injectStableMultiLoraStyle() {
   const style = document.createElement("style");
   style.id = "h3-stable-multi-lora-style";
   style.textContent = `
-    .h3-stable-multi-lora { box-sizing:border-box; display:flex; flex-direction:column; gap:6px; width:100%; min-width:0; max-width:100%; padding:4px 0 7px; overflow:hidden; color:#e6edf0; font:12px system-ui,sans-serif; user-select:none; }
-    .h3-stable-multi-lora .h3-sml-head { display:flex; min-width:0; align-items:center; justify-content:space-between; gap:8px; color:#a6c0c9; font-size:10px; }
+    .h3-stable-multi-lora { box-sizing:border-box; display:flex; flex-direction:column; gap:4px; width:100%; min-width:0; max-width:100%; padding:4px 0 6px; overflow:hidden; color:#e6edf0; font:12px system-ui,sans-serif; user-select:none; }
+    .h3-stable-multi-lora .h3-sml-head { display:flex; flex:0 0 16px; line-height:16px; min-width:0; align-items:center; justify-content:space-between; gap:8px; color:#a6c0c9; font-size:10px; }
     .h3-stable-multi-lora .h3-sml-head strong, .h3-stable-multi-lora .h3-sml-head span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .h3-stable-multi-lora .h3-sml-head strong { color:#dbeef3; font-size:11px; }
-    .h3-stable-multi-lora .h3-sml-row { box-sizing:border-box; display:grid; width:100%; min-width:0; grid-template-columns:38px minmax(0,1fr) 68px 68px; align-items:center; gap:6px; min-height:32px; padding:3px 5px; border:1px solid #4b4a70; border-radius:8px; background:linear-gradient(135deg,#272640,#202038); }
+    .h3-stable-multi-lora .h3-sml-row { box-sizing:border-box; display:grid; width:100%; min-width:0; grid-template-columns:38px minmax(0,1fr) 58px 58px; align-items:center; gap:4px; height:28px; min-height:28px; padding:2px 4px; border:1px solid #4b4a70; border-radius:8px; background:linear-gradient(135deg,#272640,#202038); }
     .h3-stable-multi-lora .h3-sml-row.bypassed { opacity:.58; background:linear-gradient(135deg,#262633,#20202b); }
-    .h3-stable-multi-lora select, .h3-stable-multi-lora input, .h3-stable-multi-lora button { box-sizing:border-box; height:26px; min-width:0; border:1px solid #66638d; border-radius:5px; color:#e9e9f2; background:#191924; font:11px system-ui,sans-serif; }
+    .h3-stable-multi-lora select, .h3-stable-multi-lora input, .h3-stable-multi-lora button { box-sizing:border-box; height:22px; min-width:0; border:1px solid #66638d; border-radius:5px; color:#e9e9f2; background:#191924; font:11px system-ui,sans-serif; }
     .h3-stable-multi-lora select { width:100%; padding:0 5px; }
     .h3-stable-multi-lora input { width:100%; padding:0 5px; text-align:right; }
     .h3-stable-multi-lora input:focus, .h3-stable-multi-lora select:focus { outline:1px solid #a89be6; border-color:#a89be6; }
@@ -2974,7 +2974,7 @@ function injectStableMultiLoraStyle() {
     .h3-stable-multi-lora .h3-sml-switch.enabled { border-color:#6e7bc0; background:#879bd0; }
     .h3-stable-multi-lora .h3-sml-switch.enabled::after { transform:translateX(13px); background:#f6f7ff; }
     .h3-stable-multi-lora .h3-sml-strength { position:relative; }
-    .h3-stable-multi-lora .h3-sml-strength::before { position:absolute; z-index:1; top:7px; left:5px; color:#aab2ca; font-size:9px; font-weight:800; pointer-events:none; }
+    .h3-stable-multi-lora .h3-sml-strength::before { position:absolute; z-index:1; top:5px; left:5px; color:#aab2ca; font-size:9px; font-weight:800; pointer-events:none; }
     .h3-stable-multi-lora .h3-sml-model::before { content:"M"; }
     .h3-stable-multi-lora .h3-sml-clip::before { content:"C"; }
     .h3-stable-multi-lora .h3-sml-strength input { padding-left:17px; }
@@ -3222,38 +3222,31 @@ function createStableMultiLoraCompactUI(node) {
   const hint = document.createElement("span"); hint.textContent = "关闭即绕过，选择和强度会保留";
   head.append(title, hint);
   const rows = document.createElement("div");
+  rows.style.cssText = "display:flex;flex-direction:column;gap:4px;flex:0 0 auto";
   root.append(head, rows);
 
-  const intrinsicHeight = () => {
-    // addDOMWidget can stretch root to match a node's current height. Measure
-    // only its real children, otherwise each refresh would make this node grow.
-    const style = getComputedStyle(root);
-    const padding = (Number.parseFloat(style.paddingTop) || 0) + (Number.parseFloat(style.paddingBottom) || 0);
-    const gap = Number.parseFloat(style.rowGap || style.gap) || 0;
-    return Math.ceil(padding + (head.offsetHeight || 0) + (rows.offsetHeight || 0) + gap);
-  };
+  // Reserve each row before DOM attachment; hidden/collapsed nodes cannot
+  // provide reliable offsetHeight or last_y measurements.
+  const intrinsicHeight = () => 10 + 16 + 4 + rows.childElementCount * 28
+    + Math.max(0, rows.childElementCount - 1) * 4;
 
-  const syncSize = () => requestAnimationFrame(() => {
-    // ComfyUI stretches a DOM widget to all remaining node height.  Therefore
-    // root.offsetHeight reflects the old oversized node and cannot be used.
-    // `last_y` is the real canvas position at which this DOM widget begins;
-    // intrinsicHeight measures only its header and visible LoRA rows. The DOM
-    // wrapper itself reserves another fixed 20 canvas units around the root.
-    const widgetTop = Number(domWidget?.last_y) || 90;
-    const exactHeight = Math.ceil(widgetTop + intrinsicHeight() + 20);
-    const width = Math.max(250, Number(node.size?.[0]) || 250);
-    node._stableMultiLoraAutoHeight = exactHeight;
-    node.min_size = [250, exactHeight];
-    node.max_size = [Number.MAX_SAFE_INTEGER, exactHeight];
-    if (Math.abs((Number(node.size?.[1]) || 0) - exactHeight) > 1) {
-      node.setSize?.([width, exactHeight]);
-      // Some versions of the original node restore their serialized height
-      // from onResize.  Apply the compact height once more after that callback
-      // so an opened workflow starts directly below its final visible row.
-      if (Array.isArray(node.size)) node.size[1] = exactHeight;
-      node.graph?.setDirtyCanvas?.(true, true);
-    }
-  });
+  let sizePending = false;
+  const syncSize = () => {
+    if (sizePending) return;
+    sizePending = true;
+    requestAnimationFrame(() => {
+      sizePending = false;
+      const width = Math.max(360, Number(node.size?.[0]) || 360);
+      const exactHeight = Math.ceil(node.computeSize([width, 0])[1]);
+      node._stableMultiLoraAutoHeight = exactHeight;
+      node.min_size = [360, exactHeight];
+      node.max_size = [Number.MAX_SAFE_INTEGER, exactHeight];
+      if (node.size[0] !== width || node.size[1] !== exactHeight) {
+        node.setSize([width, exactHeight]);
+        node.graph?.setDirtyCanvas?.(true, true);
+      }
+    });
+  };
 
   const render = () => {
     const count = Math.max(1, Math.min(STABLE_MULTI_LORA_MAX, Number(stableMultiLoraWidget(node, "lora_count")?.value) || 1));
@@ -3292,10 +3285,16 @@ function createStableMultiLoraCompactUI(node) {
     }
     syncSize();
   };
+  // DOM widget layout includes the outer margin; its element receives the
+  // remaining height after both margins are subtracted by ComfyUI.
+  const widgetMargin = 10;
+  const widgetHeight = () => intrinsicHeight() + widgetMargin * 2;
   const domWidget = node.addDOMWidget("stable_multi_lora_ui", "STABLE_MULTI_LORA_UI", root, {
+    margin: widgetMargin,
     getValue: () => "stable-multi-lora-ui",
-    getMinHeight: () => 48,
-    getHeight: () => Math.max(48, intrinsicHeight()),
+    getMinHeight: widgetHeight,
+    getMaxHeight: widgetHeight,
+    getHeight: widgetHeight,
   });
   domWidget.serialize = false;
   const priorResize = node.onResize;
@@ -3303,7 +3302,7 @@ function createStableMultiLoraCompactUI(node) {
     // Width remains user-resizable. Height belongs to the compact list and is
     // recalculated when its LoRA count changes.
     priorResize?.call(this, size);
-    if (Array.isArray(size) && Number.isFinite(Number(this._stableMultiLoraAutoHeight))) {
+    if (size && Number.isFinite(Number(this._stableMultiLoraAutoHeight))) {
       size[1] = Number(this._stableMultiLoraAutoHeight);
     }
   };
