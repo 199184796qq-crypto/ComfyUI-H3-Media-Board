@@ -894,8 +894,8 @@ class H3SecondPassPreparation:
             "optional": optional,
         }
 
-    RETURN_TYPES = ("CONDITIONING", "LATENT", "MODEL")
-    RETURN_NAMES = ("二采正向条件", "二采 latent", "二采模型")
+    RETURN_TYPES = ("MODEL", "CONDITIONING", "LATENT")
+    RETURN_NAMES = ("二采模型", "二采正向条件", "二采 latent")
     FUNCTION = "prepare"
     CATEGORY = "H3 / Media"
 
@@ -1017,7 +1017,7 @@ class H3SecondPassPreparation:
                 vae=vae, audio_vae=audio_vae,
                 image=guide_image, audio=guide_audio,
             )[0]
-        return (positive, upscaled_latent, model)
+        return (model, positive, upscaled_latent)
 
 
 class H3MultiTimeGuide:
