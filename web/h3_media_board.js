@@ -323,7 +323,7 @@ function updateH3VariableGet(node) {
     if (!h3mbTypesCompatible(spec.type, targetType)) node.graph?.removeLink?.(linkId);
     else if (link && previousType !== spec.type) link.type = spec.type;
   }
-  node.title = "获取 H3mb 内置变量";
+  node.title = `H3内部变量_${spec.name.replace(/^H3MB_/i, "")}`;
   node.graph?.setDirtyCanvas?.(true, true);
 }
 
