@@ -406,7 +406,11 @@ function injectStyle() {
     .h3-dynamic-media-board .mb-title { margin-top:10px; }
     .h3-media-board .mb-title { margin: 8px 0 5px; color:#c9c9c9; font-weight:700; }
     .h3-media-board .mb-row { display:flex; gap:7px; min-height:78px; }
-    .h3-media-board .mb-image-error { position:absolute; inset:0; display:grid; place-items:center; color:#89979e; line-height:1; pointer-events:none; }
+    .h3-media-board .mb-media-heading { display:flex; align-items:center; justify-content:space-between; }
+    .h3-media-board .mb-media-reset { box-sizing:border-box; height:20px; padding:0 8px; border:1px solid #714556; border-radius:5px; background:#342332; color:#e6aab6; font:11px system-ui,sans-serif; cursor:pointer; }
+    .h3-media-board .mb-media-reset:hover { background:#492e40; border-color:#cf788f; color:#ffdbe3; }
+    .h3-media-board .mb-media-reset:focus-visible { outline:2px solid #85e9ff; outline-offset:2px; }
+    .h3-media-board .mb-image-error { position:absolute; inset:0; display:grid; place-items:center; color:#465157; line-height:1; pointer-events:none; }
     .h3-media-board .mb-image-grid { display:grid; grid-template-columns:repeat(3, 294px); gap:7px; }
     .h3-media-board .mb-card { position:relative; box-sizing:border-box; width:294px; flex:0 0 294px; border:1px dashed #687078; border-radius:8px; background:#202428; overflow:hidden; cursor:pointer; }.h3-media-board .mb-card.sortable { cursor:grab; }.h3-media-board .mb-card.sortable:active { cursor:grabbing; }.h3-media-board .mb-card.sort-target { border:2px solid #6fdaea; box-shadow:inset 0 0 0 1px #6fdaea99; }
     .h3-media-board .mb-card.drag-over { border:2px solid #69ee7a; background:#243129; box-shadow:inset 0 0 0 1px #69ee7a66; }
@@ -480,7 +484,26 @@ function injectStyle() {
     .h3-media-board .mb-scheduler-field label { overflow:hidden; color:#ded1b3; font-size:12px; font-weight:750; text-overflow:ellipsis; white-space:nowrap; }
     .h3-media-board .mb-scheduler-field input, .h3-media-board .mb-scheduler-field select { box-sizing:border-box; min-width:0; width:100%; height:29px; padding:4px 8px; color:#fff7e5; background:#13110e; border:1px solid #786943; border-radius:5px; outline:none; font:12px ui-monospace,Consolas,monospace; }
     .h3-media-board .mb-scheduler-field input:focus, .h3-media-board .mb-scheduler-field select:focus { border-color:#efca70; box-shadow:0 0 0 2px #efca7022; }
-    .h3-media-board .mb-versions { margin:4px 0 11px; padding:7px 9px; border:1px solid #4c626a; border-radius:7px; background:#182127; }.h3-media-board .mb-versions-head { display:flex; align-items:center; gap:8px; }.h3-media-board .mb-versions-toggle { padding:0; border:0; color:#d7edf4; background:transparent; cursor:pointer; font:800 12px system-ui,sans-serif; }.h3-media-board .mb-versions-toggle:hover { color:#fff; }.h3-media-board .mb-versions-current { margin-left:auto; color:#8fa9b4; font-size:10px; }.h3-media-board .mb-versions-body { display:flex; flex-wrap:nowrap; align-items:center; gap:7px; margin-top:7px; min-width:0; }.h3-media-board .mb-versions select { flex:0 1 390px; width:390px; min-width:150px; }.h3-media-board .mb-versions select, .h3-media-board .mb-versions button { height:26px; padding:3px 7px; border:1px solid #4b626c; border-radius:4px; color:#e4eef2; background:#11191e; font:11px system-ui,sans-serif; }.h3-media-board .mb-versions button { flex:none; cursor:pointer; }.h3-media-board .mb-versions button:hover { border-color:#72d9e5; background:#1d3a43; }.h3-media-board .mb-versions button:last-child { margin-left:auto; color:#ffc6c8; border-color:#75484e; background:#2c1b20; }.h3-media-board .mb-versions button:last-child:hover { border-color:#ed7b81; color:#fff0f1; background:#47242a; }.h3-media-board .mb-versions button:disabled { cursor:not-allowed; opacity:.45; }
+    .h3-media-board .mb-versions { margin:4px 0 11px; padding:7px 9px; border:1px solid #345766; border-radius:10px; background:radial-gradient(ellipse at 90% 0%, #16495b55, transparent 65%), linear-gradient(125deg, #172733, #101b25 65%); box-shadow:inset 0 1px 0 #9ceaff25, 0 4px 14px #0003; }
+    .h3-media-board .mb-versions-head { display:flex; align-items:center; gap:8px; }
+    .h3-media-board .mb-versions-current { margin-left:auto; color:#88abbc; font-size:10px; white-space:nowrap; }
+    .h3-media-board .mb-versions-current::before { content:""; display:inline-block; width:5px; height:5px; margin-right:6px; border-radius:50%; background:#64ead1; box-shadow:0 0 7px #64ead177; vertical-align:middle; }
+    .h3-media-board .mb-versions-body { display:flex; flex-wrap:nowrap; align-items:center; gap:7px; margin-top:7px; min-width:0; }
+    .h3-media-board .mb-versions select { flex:1 1 150px; width:0; min-width:120px; text-overflow:ellipsis; color-scheme:dark; }
+    .h3-media-board .mb-versions select, .h3-media-board .mb-versions button { box-sizing:border-box; height:26px; padding:3px 9px; border:1px solid #385467; border-radius:6px; color:#dcebf5; background:#142431; font:11px system-ui,sans-serif; }
+    .h3-media-board .mb-versions select { background:#0b1823; box-shadow:inset 0 1px 4px #0003; }
+    .h3-media-board .mb-versions option { background:#10212e; color:#dcebf5; }
+    .h3-media-board .mb-versions button { flex:none; cursor:pointer; transition:background .16s, border-color .16s, box-shadow .16s; }
+    .h3-media-board .mb-versions button:hover:not(:disabled) { border-color:#70dced; background:#203e50; box-shadow:0 0 8px #4bd5ed20; }
+    .h3-media-board .mb-versions button:focus-visible, .h3-media-board .mb-versions select:focus-visible { outline:2px solid #85e9ff; outline-offset:2px; }
+    .h3-media-board .mb-versions .mb-versions-toggle { padding:0 2px; border-color:transparent; background:transparent; color:#c6f5ff; font-weight:800; letter-spacing:.5px; }
+    .h3-media-board .mb-versions .mb-versions-save { color:#071c2a; font-weight:750; border-color:#78e7ef; background:linear-gradient(110deg, #6fe7d5, #66bbff); box-shadow:0 2px 9px #56cde62b, inset 0 1px 0 #ffffff66; }
+    .h3-media-board .mb-versions .mb-versions-save:hover { background:linear-gradient(110deg, #9cf7e5, #8ed4ff); border-color:#b5f6ff; box-shadow:0 0 13px #56cde64d; }
+    .h3-media-board .mb-versions .mb-versions-delete { margin-left:0; }
+    .h3-media-board .mb-versions .mb-versions-actions { justify-content:flex-end; border-top:1px solid #85b8d015; padding-top:0; }
+    .h3-media-board .mb-versions .mb-versions-clear { color:#829dad; border-color:transparent; background:transparent; }
+    .h3-media-board .mb-versions .mb-versions-delete:hover:not(:disabled) { color:#ffdbe3; border-color:#cf788f; background:#492e40; box-shadow:none; }
+    .h3-media-board .mb-versions button:disabled { cursor:not-allowed; opacity:.35; }
     /* Keep the seed controls as a compact toolbar.  The panel may be wide,
        but its controls must not stretch simply to fill available space. */
     .h3-media-board .mb-noise { position:relative; display:grid; grid-template-columns:minmax(220px,280px) repeat(3, max-content); justify-content:start; gap:8px; align-items:end; margin:16px 0 2px; padding:27px 12px 11px; border:1px solid #685b91; border-radius:9px; background:linear-gradient(145deg,#282338 0%,#1b1925 100%); box-shadow:inset 0 1px #ffffff08, 0 2px 8px #0004; }
@@ -846,7 +869,7 @@ function makeCard(kind, index, asset, update, config = {}) {
       hideCardImageHoverPreview();
       const fallback = document.createElement("span");
       fallback.className = "mb-image-error";
-      fallback.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none" aria-hidden="true"><circle cx="24" cy="24" r="20" fill="currentColor"/><path d="M13 18l5-2m12 0 5 2" stroke="#30383d" stroke-width="2.5" stroke-linecap="round"/><circle cx="17" cy="23" r="2" fill="#30383d"/><circle cx="31" cy="23" r="2" fill="#30383d"/><path d="M19 34q5-6 10 0" stroke="#30383d" stroke-width="2.5" stroke-linecap="round"/><path d="M13 26s-4 5-4 7a4 4 0 0 0 8 0c0-2-4-7-4-7Z" fill="#b1c4ce"/></svg>';
+      fallback.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="24" cy="24" r="19"/><path d="M14 19l5-2m10 0 5 2M18 24h.01M30 24h.01M18 34q6-7 12 0M13 27s-3 4-3 6a3 3 0 0 0 6 0c0-2-3-6-3-6Z"/></svg>';
       fallback.title = "图片加载失败，可点击替换重新上传";
       fallback.setAttribute("role", "img");
       fallback.setAttribute("aria-label", "图片加载失败");
@@ -1950,7 +1973,7 @@ function createBoard(node) {
         const selected = select.value === "current" ? versions.current : versions.entries.find((entry) => entry.id === select.value);
         applyVersion(selected);
       };
-      const add = document.createElement("button"); add.type = "button"; add.textContent = "保存版本";
+      const add = document.createElement("button"); add.type = "button"; add.className = "mb-versions-save"; add.textContent = "＋ 保存版本";
       add.onclick = (event) => {
         stop(event);
         const note = window.prompt("版本备注（可不填；长备注在下拉列表中只显示前 24 个字）：", "");
@@ -1959,7 +1982,7 @@ function createBoard(node) {
         versions.entries.unshift(entry); versions.entries = versions.entries.slice(0, 20);
         saveVersions(versions); node._h3VersionSelection = entry.id; saveBackup(); render();
       };
-      const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "删除";
+      const remove = document.createElement("button"); remove.type = "button"; remove.className = "mb-versions-delete"; remove.textContent = "删除";
       remove.disabled = select.value === "current";
       remove.onclick = (event) => {
         stop(event); const selected = node._h3VersionSelection || "current";
@@ -1968,22 +1991,34 @@ function createBoard(node) {
         node._h3VersionSelection = "current"; saveVersions(versions); render();
       };
       body.append(select, load, add, remove); panel.appendChild(body);
-      const actions = document.createElement("div"); actions.className = "mb-versions-body";
+      const actions = document.createElement("div"); actions.className = "mb-versions-body mb-versions-actions";
       actions.style.flexWrap = "wrap";
       const clearVersions = document.createElement("button");
-      clearVersions.type = "button"; clearVersions.textContent = "清除所有保存版本";
+      clearVersions.type = "button"; clearVersions.className = "mb-versions-clear"; clearVersions.textContent = "清空记录";
       clearVersions.title = "清除本节点手动保存的全部版本，保留当前素材和参数。";
       clearVersions.disabled = versions.entries.length === 0;
       clearVersions.onclick = (event) => {
         stop(event);
+        if (!window.confirm("确定清空所有已保存的版本记录吗？此操作无法撤销，当前素材和参数会保留。")) return;
         const latest = readVersions();
         latest.entries = [];
         node._h3VersionSelection = "current";
         saveVersions(latest); saveBackup(); render();
         node.graph?.setDirtyCanvas?.(true, true);
       };
+      actions.append(clearVersions); panel.appendChild(actions);
+    }
+    root.appendChild(panel);
+  };
+  const render = () => {
+    const state = readManifest(manifestWidget); root.replaceChildren();
+    appendVersionManager();
+    for (const kind of ["image", "audio", "video"]) {
+      const title = document.createElement("div"); title.className = "mb-title"; title.textContent = `${LABELS[kind]} · ${LIMITS[kind]}`; root.appendChild(title);
+      if (kind === "image") {
+        title.classList.add("mb-media-heading");
       const reset = document.createElement("button");
-      reset.type = "button"; reset.textContent = "清空上传并恢复默认参数";
+      reset.type = "button"; reset.className = "mb-media-reset"; reset.textContent = "恢复默认";
       reset.title = "清空本节点的图片、音频、视频和提示词，恢复默认参数；保留已保存版本和磁盘文件。";
       reset.onclick = (event) => {
         stop(event);
@@ -2000,15 +2035,8 @@ function createBoard(node) {
           },
         } });
       };
-      actions.append(clearVersions, reset); panel.appendChild(actions);
-    }
-    root.appendChild(panel);
-  };
-  const render = () => {
-    const state = readManifest(manifestWidget); root.replaceChildren();
-    appendVersionManager();
-    for (const kind of ["image", "audio", "video"]) {
-      const title = document.createElement("div"); title.className = "mb-title"; title.textContent = `${LABELS[kind]} · ${LIMITS[kind]}`; root.appendChild(title);
+        title.appendChild(reset);
+      }
       const row = document.createElement("div");
       // Images are deliberately a 3 × 3 grid. Audio and video stay as three fixed cards in one row.
       row.className = kind === "image" ? "mb-image-grid" : "mb-row";
@@ -2942,7 +2970,11 @@ function decorateDynamicGuide(node, prefix) {
     const audio = findInput(dynamicGuideInputName(prefix, index, "audio"));
     return image?.link != null || audio?.link != null;
   };
+  let refreshingGroups = false;
   const refreshGroups = () => {
+    if (refreshingGroups) return;
+    refreshingGroups = true;
+    try {
     let lastConnected = 0;
     for (let index = 1; index <= H3_DYNAMIC_GUIDE_GROUPS; index += 1) {
       if (groupHasConnection(index)) lastConnected = index;
@@ -2967,7 +2999,9 @@ function decorateDynamicGuide(node, prefix) {
     const preferred = node.computeSize?.();
     if (preferred) node.setSize?.([Math.max(345, preferred[0]), Math.max(190, preferred[1])]);
     node.graph?.setDirtyCanvas(true, true);
+    } finally { refreshingGroups = false; }
   };
+  node._h3RefreshGuideGroups = refreshGroups;
   const previousConnections = node.onConnectionsChange;
   node.onConnectionsChange = function (...args) {
     previousConnections?.apply(this, args);
@@ -3326,6 +3360,7 @@ function createStableMultiLoraCompactUI(node) {
       deltaMode: event.deltaMode, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey,
       altKey: event.altKey, metaKey: event.metaKey,
     }));
+  }, { passive: false });
   const head = document.createElement("div"); head.className = "h3-sml-head";
   const title = document.createElement("strong"); title.textContent = "LoRA 列表";
   const hint = document.createElement("span"); hint.textContent = "关闭即绕过，选择和强度会保留";
@@ -4025,6 +4060,19 @@ app.registerExtension({
     }
   },
   loadedGraphNode(node) {
+    if (node.comfyClass === "DynamicMediaBoard") {
+      requestAnimationFrame(() => {
+        createDynamicMediaBoard(node);
+        node._dynamicMediaRestore?.();
+      });
+    }
+    if (node.comfyClass === "H3MultiTimeGuide" || node.comfyClass === "H3SecondPassPreparation") {
+      requestAnimationFrame(() => {
+        if (node.comfyClass === "H3MultiTimeGuide") decorateMultiTimeGuide(node);
+        else decorateSecondPassPreparation(node);
+        node._h3RefreshGuideGroups?.();
+      });
+    }
     if (node.comfyClass === "H3MediaBoardVariableGet") {
       requestAnimationFrame(() => decorateH3VariableGet(node));
     }
