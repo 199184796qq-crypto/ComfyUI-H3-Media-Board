@@ -1170,7 +1170,7 @@ function makePromptEditor(promptWidget, node, getState, saveBackup, onPromptChan
   actions.className = "mb-prompt-actions";
   const help = document.createElement("span");
   help.className = "mb-prompt-help";
-  help.textContent = "提示词说明：@可以呼出素材，鼠标放在关键词能显示素材，按住 Ctrl 可以点击素材播放素材。提示词优先锁定视频比例";
+  help.textContent = "提示词说明：@可以呼出素材，鼠标放在关键词能显示素材，中键点击音频或视频标签可播放/暂停，按住 Ctrl 可操作预览控件。提示词优先锁定视频比例";
   const editor = document.createElement("div");
   editor.className = "mb-prompt-editor";
   editor.contentEditable = "true";
@@ -1228,7 +1228,7 @@ function makePromptEditor(promptWidget, node, getState, saveBackup, onPromptChan
     if (!reference?.asset) { hideReferencePreview(); return; }
     cancelReferencePreviewHide(); previewPinned = Boolean(event.ctrlKey); setPreviewInteractive(previewPinned);
     const title = document.createElement("span"); title.className = "mb-reference-preview-title";
-    title.textContent = `<${type} ${index}> · ${reference.asset.name || "已上传素材"}${reference.kind === "image" ? "" : "（按 Ctrl 固定后可播放）"}`;
+    title.textContent = `<${type} ${index}> · ${reference.asset.name || "已上传素材"}${reference.kind === "image" ? "" : "（中键播放/暂停，Ctrl 操作控件）"}`;
     referencePreview.replaceChildren(title);
     if (reference.kind === "image") {
       const image = new Image(); image.src = viewUrl(reference.asset.path); image.alt = title.textContent; referencePreview.appendChild(image);
@@ -1239,6 +1239,23 @@ function makePromptEditor(promptWidget, node, getState, saveBackup, onPromptChan
     }
     referencePreview.hidden = false; placeReferencePreview(event);
   };
+  const toggleReferencePlayback = (event) => {
+    if (event.button !== 1) return;
+    const media = referencePreview.querySelector("audio, video");
+    if (!media) return;
+    event.preventDefault(); event.stopPropagation();
+    cancelReferencePreviewHide(); previewPinned = true; setPreviewInteractive(true);
+    if (media.paused) media.play().catch(() => {
+      const title = referencePreview.querySelector(".mb-reference-preview-title");
+      if (title && referencePreview.contains(media)) title.textContent = "无法播放，请检查素材或使用播放控件重试";
+    });
+    else media.pause();
+  };
+  const suppressMiddleDefault = (event) => {
+    if (event.button === 1) { event.preventDefault(); event.stopPropagation(); }
+  };
+  referencePreview.addEventListener("mousedown", toggleReferencePlayback);
+  referencePreview.addEventListener("auxclick", suppressMiddleDefault);
 
   let mention = null;
   let activeIndex = 0;
@@ -1375,9 +1392,18 @@ function makePromptEditor(promptWidget, node, getState, saveBackup, onPromptChan
         const referenceType = match[1], referenceIndex = match[2];
         const reference = document.createElement("span");
         reference.className = "mb-media-ref"; reference.textContent = match[0];
+        if (referenceType !== "Picture") {
+          reference.dataset.middlePlayback = "true";
+          reference.onmousedown = (event) => {
+            if (event.button !== 1) return;
+            if (referencePreview.hidden) showReferencePreview(referenceType, referenceIndex, event);
+            toggleReferencePlayback(event);
+          };
+          reference.onauxclick = suppressMiddleDefault;
+        }
         reference.onpointerenter = (event) => showReferencePreview(referenceType, referenceIndex, event);
         reference.onpointermove = (event) => { if (!previewPinned && !event.ctrlKey) placeReferencePreview(event); };
-        reference.onpointerleave = scheduleReferencePreviewHide;
+        reference.onpointerleave = () => scheduleReferencePreviewHide();
         fragment.appendChild(reference);
       } else fragment.appendChild(document.createTextNode(match[0]));
       cursor = match.index + match[0].length;
@@ -1762,6 +1788,7 @@ function createBoard(node) {
   };
   root.addEventListener("mousedown", (event) => {
     if (event.button !== 1) return;
+    if (event.target.closest?.('[data-middle-playback="true"]')) return;
     event.preventDefault(); event.stopPropagation(); middlePanning = true; root.style.cursor = "grabbing";
     const ds = dragAndScale();
     if (ds) panStart = { clientX: event.clientX, clientY: event.clientY, offsetX: Number(ds.offset[0]), offsetY: Number(ds.offset[1]) };
