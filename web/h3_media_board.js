@@ -1914,10 +1914,18 @@ function createBoard(node) {
       const select = document.createElement("select");
       const currentOption = document.createElement("option"); currentOption.value = "current"; currentOption.textContent = "当前最新状态（系统自动保留）"; select.appendChild(currentOption);
       versions.entries.forEach((entry) => {
-        const option = document.createElement("option"); option.value = entry.id; option.textContent = `手动版本 · ${versionTime(entry.saved_at)}`; select.appendChild(option);
+        const option = document.createElement("option"); option.value = entry.id;
+        const note = String(entry.note || "").replace(/\s+/g, " ").trim();
+        const characters = Array.from(note);
+        const summary = characters.length > 24 ? `${characters.slice(0, 24).join("")}…` : note;
+        option.textContent = `手动版本 · ${versionTime(entry.saved_at)}${summary ? ` · ${summary}` : ""}`;
+        option.title = String(entry.note || "");
+        select.appendChild(option);
       });
       select.value = node._h3VersionSelection || "current";
+      select.title = select.selectedOptions[0]?.title || "";
       select.onchange = () => {
+        select.title = select.selectedOptions[0]?.title || "";
         node._h3VersionSelection = select.value;
         load.disabled = !select.value;
         remove.disabled = select.value === "current";
@@ -1932,7 +1940,9 @@ function createBoard(node) {
       const add = document.createElement("button"); add.type = "button"; add.textContent = "保存版本";
       add.onclick = (event) => {
         stop(event);
-        const entry = { id: `manual-${Date.now()}`, saved_at: Date.now(), snapshot: cloneSnapshot(snapshot()) };
+        const note = window.prompt("版本备注（可不填；长备注在下拉列表中只显示前 24 个字）：", "");
+        if (note === null) return;
+        const entry = { id: `manual-${Date.now()}`, saved_at: Date.now(), note: note.trim(), snapshot: cloneSnapshot(snapshot()) };
         versions.entries.unshift(entry); versions.entries = versions.entries.slice(0, 20);
         saveVersions(versions); node._h3VersionSelection = entry.id; saveBackup(); render();
       };
