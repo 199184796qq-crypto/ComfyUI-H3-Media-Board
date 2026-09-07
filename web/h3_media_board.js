@@ -406,6 +406,7 @@ function injectStyle() {
     .h3-dynamic-media-board .mb-title { margin-top:10px; }
     .h3-media-board .mb-title { margin: 8px 0 5px; color:#c9c9c9; font-weight:700; }
     .h3-media-board .mb-row { display:flex; gap:7px; min-height:78px; }
+    .h3-media-board .mb-image-error { position:absolute; inset:0; display:grid; place-items:center; color:#89979e; line-height:1; pointer-events:none; }
     .h3-media-board .mb-image-grid { display:grid; grid-template-columns:repeat(3, 294px); gap:7px; }
     .h3-media-board .mb-card { position:relative; box-sizing:border-box; width:294px; flex:0 0 294px; border:1px dashed #687078; border-radius:8px; background:#202428; overflow:hidden; cursor:pointer; }.h3-media-board .mb-card.sortable { cursor:grab; }.h3-media-board .mb-card.sortable:active { cursor:grabbing; }.h3-media-board .mb-card.sort-target { border:2px solid #6fdaea; box-shadow:inset 0 0 0 1px #6fdaea99; }
     .h3-media-board .mb-card.drag-over { border:2px solid #69ee7a; background:#243129; box-shadow:inset 0 0 0 1px #69ee7a66; }
@@ -840,7 +841,19 @@ function makeCard(kind, index, asset, update, config = {}) {
     card.ondragend = () => { draggedMediaCard = null; card.classList.remove("sort-target"); };
   }
   if (kind === "image") {
-    const image = new Image(); image.src = viewUrl(asset.path); card.appendChild(image);
+    const image = new Image();
+    image.onerror = () => {
+      hideCardImageHoverPreview();
+      const fallback = document.createElement("span");
+      fallback.className = "mb-image-error";
+      fallback.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none" aria-hidden="true"><circle cx="24" cy="24" r="20" fill="currentColor"/><path d="M13 18l5-2m12 0 5 2" stroke="#30383d" stroke-width="2.5" stroke-linecap="round"/><circle cx="17" cy="23" r="2" fill="#30383d"/><circle cx="31" cy="23" r="2" fill="#30383d"/><path d="M19 34q5-6 10 0" stroke="#30383d" stroke-width="2.5" stroke-linecap="round"/><path d="M13 26s-4 5-4 7a4 4 0 0 0 8 0c0-2-4-7-4-7Z" fill="#b1c4ce"/></svg>';
+      fallback.title = "图片加载失败，可点击替换重新上传";
+      fallback.setAttribute("role", "img");
+      fallback.setAttribute("aria-label", "图片加载失败");
+      image.replaceWith(fallback);
+      card.ondblclick = null;
+    };
+    image.src = viewUrl(asset.path); card.appendChild(image);
     image.onpointerenter = (event) => showCardImageHoverPreview(asset.path, event);
     image.onpointermove = placeCardImageHoverPreview;
     image.onpointerleave = hideCardImageHoverPreview;
