@@ -2799,7 +2799,13 @@ function decorateConditionLatentSwitch(node) {
   // only makes the canvas harder to arrange.  Keep that measured height while
   // retaining horizontal resizing for long socket labels and wiring layouts.
   const preferredSize = node.computeSize?.() || node.size || [360, 250];
-  const fixedHeight = Math.max(160, Math.ceil(Number(preferredSize[1]) || 250));
+  // ComfyUI's initial widget measurement omits part of the vertical footprint
+  // used by the Boolean and combo widgets.  This was most visible here: the
+  // last audio-strength control rendered through the bottom border.  Keep a
+  // fixed bottom gutter so all three routing controls stay inside the node at
+  // every browser zoom level.
+  const widgetBottomGutter = 48;
+  const fixedHeight = Math.max(208, Math.ceil(Number(preferredSize[1]) || 250) + widgetBottomGutter);
   const minWidth = Math.max(300, Math.ceil(Number(preferredSize[0]) || 360));
   const maxWidth = 920;
   node.resizable = true;
