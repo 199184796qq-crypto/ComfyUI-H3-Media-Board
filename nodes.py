@@ -851,6 +851,7 @@ class H3SecondPassPreparation:
     def INPUT_TYPES(cls):
         required = {
             "media_board": ("H3_MEDIA_BOARD", {"tooltip": "接 H3 Media Board 或模式控制节点的 media_board 输出。"}),
+            "model": ("MODEL", {"tooltip": "接 MiniMax H3 模型；从本节点的 model 输出继续连接二采 sampler。"}),
             "clip": ("CLIP",),
             "upscaled_latent": ("LATENT", {"tooltip": "接 LTXVConcatAVLatent 的 latent 输出。"}),
             "use_image_text": (
@@ -893,8 +894,8 @@ class H3SecondPassPreparation:
             "optional": optional,
         }
 
-    RETURN_TYPES = ("CONDITIONING", "LATENT")
-    RETURN_NAMES = ("二采正向条件", "二采 latent")
+    RETURN_TYPES = ("CONDITIONING", "LATENT", "MODEL")
+    RETURN_NAMES = ("二采正向条件", "二采 latent", "二采模型")
     FUNCTION = "prepare"
     CATEGORY = "H3 / Media"
 
@@ -924,6 +925,7 @@ class H3SecondPassPreparation:
     def prepare(
         self,
         media_board: dict[str, Any],
+        model: Any,
         clip: Any,
         upscaled_latent: dict[str, Any],
         use_image_text: bool,
@@ -1015,7 +1017,7 @@ class H3SecondPassPreparation:
                 vae=vae, audio_vae=audio_vae,
                 image=guide_image, audio=guide_audio,
             )[0]
-        return (positive, upscaled_latent)
+        return (positive, upscaled_latent, model)
 
 
 class H3MultiTimeGuide:
