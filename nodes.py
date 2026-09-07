@@ -23,6 +23,7 @@ from PIL import Image, ImageOps
 
 import folder_paths
 from server import PromptServer
+from .audio_control import control_audio
 
 
 MAX_COUNTS = {"image": 9, "audio": 3, "video": 3}
@@ -744,11 +745,16 @@ class H3ConditionLatentSwitch:
                 # A separate socket keeps the local toggle available while
                 # permitting workflow logic (Boolean/Compare nodes) to drive it.
                 "external_switch": ("BOOLEAN", {"forceInput": True, "tooltip": "外部开关；接入后优先于本节点开关。"}),
+                "audio_mode": (["native", "lock_source", "remix_source"], {"default": "native", "tooltip": "native：原生音频；lock_source：锁定源音频；remix_source：按去噪强度重混源音频。"}),
+                "audio_denoise_strength": ("FLOAT", {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "仅重混模式生效：0 保留源音频 Latent，1 完全去噪重生成。"}),
+                "drive_audio": ("AUDIO", {"tooltip": "用于锁定或重混的源音频；时长按目标 Latent 截断或补齐。"}),
+                "audio_vae": ("VAE", {"tooltip": "MiniMax H3 音频 VAE；锁定或重混模式需要。"}),
+                "final_audio": ("AUDIO", {"tooltip": "最终合成音轨，直接输出到 mux_audio；不参与采样。未连接时输出 drive_audio。"}),
             },
         }
 
-    RETURN_TYPES = ("CONDITIONING", "LATENT")
-    RETURN_NAMES = ("正向条件", "latent")
+    RETURN_TYPES = ("CONDITIONING", "LATENT", "AUDIO")
+    RETURN_NAMES = ("正向条件", "latent", "mux_audio")
     FUNCTION = "route"
     CATEGORY = "H3 / Media"
 
@@ -772,15 +778,24 @@ class H3ConditionLatentSwitch:
         multi_reference_conditioning: Any = None,
         multi_reference_latent: Any = None,
         external_switch: bool | None = None,
+        audio_mode: str = "native",
+        audio_denoise_strength: float = 0.35,
+        drive_audio: Any = None,
+        audio_vae: Any = None,
+        final_audio: Any = None,
     ):
         use_image_text = bool(external_switch) if external_switch is not None else bool(use_image_text)
         if use_image_text:
             if image_text_conditioning is None or image_text_latent is None:
                 raise ValueError("请连接图文/图生分支的正向条件和 Latent。")
-            return (image_text_conditioning, image_text_latent)
-        if multi_reference_conditioning is None or multi_reference_latent is None:
-            raise ValueError("请连接多参参考分支的正向条件和 Latent。")
-        return (multi_reference_conditioning, multi_reference_latent)
+            conditioning, latent = image_text_conditioning, image_text_latent
+        else:
+            if multi_reference_conditioning is None or multi_reference_latent is None:
+                raise ValueError("请连接多参参考分支的正向条件和 Latent。")
+            conditioning, latent = multi_reference_conditioning, multi_reference_latent
+        latent = control_audio(latent, audio_mode, audio_denoise_strength, drive_audio, audio_vae)
+        mux_audio = final_audio if final_audio is not None else drive_audio
+        return (conditioning, latent, mux_audio)
 
 
 class H3VideoModeControl:

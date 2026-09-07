@@ -2778,6 +2778,9 @@ function removeLegacyConditionBoardPort(node) {
 }
 
 function decorateConditionLatentSwitch(node) {
+  if (!node.outputs?.some((output) => output.name === "mux_audio")) {
+    node.addOutput("mux_audio", "AUDIO");
+  }
   if (node._h3ConditionSwitchDecorated) return;
   removeLegacyConditionBoardPort(node);
   const modeWidget = node.widgets?.find((widget) => widget.name === "use_image_text");
@@ -2792,7 +2795,7 @@ function decorateConditionLatentSwitch(node) {
   }
   node._h3ConditionSwitchDecorated = true;
   // This is a compact routing node.  Its useful height is determined entirely
-  // by the fixed sockets and its one Boolean widget, so extra vertical space
+  // by its sockets and mode/audio widgets, so extra vertical space
   // only makes the canvas harder to arrange.  Keep that measured height while
   // retaining horizontal resizing for long socket labels and wiring layouts.
   const preferredSize = node.computeSize?.() || node.size || [360, 250];
