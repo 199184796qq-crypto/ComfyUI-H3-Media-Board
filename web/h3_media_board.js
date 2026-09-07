@@ -3312,6 +3312,20 @@ function createStableMultiLoraCompactUI(node) {
   const root = document.createElement("div");
   root.className = "h3-stable-multi-lora";
   root.onpointerdown = (event) => event.stopPropagation();
+  // The DOM list sits above LiteGraph's canvas, so forward wheel gestures
+  // to the canvas and preserve its normal zoom behavior over this node.
+  root.addEventListener("wheel", (event) => {
+    const canvas = app.canvas?.canvas;
+    if (!canvas) return;
+    event.preventDefault(); event.stopPropagation();
+    canvas.dispatchEvent(new WheelEvent("wheel", {
+      bubbles: true, cancelable: true,
+      clientX: event.clientX, clientY: event.clientY,
+      screenX: event.screenX, screenY: event.screenY,
+      deltaX: event.deltaX, deltaY: event.deltaY, deltaZ: event.deltaZ,
+      deltaMode: event.deltaMode, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey,
+      altKey: event.altKey, metaKey: event.metaKey,
+    }));
   const head = document.createElement("div"); head.className = "h3-sml-head";
   const title = document.createElement("strong"); title.textContent = "LoRA 列表";
   const hint = document.createElement("span"); hint.textContent = "关闭即绕过，选择和强度会保留";
