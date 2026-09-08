@@ -516,7 +516,7 @@ class H3MediaBoard:
     RETURN_TYPES = ("H3_MEDIA_BOARD", "NOISE", "FLOAT", "STRING", "INT", "INT", "SAMPLER")
     RETURN_NAMES = ("media_board", "noise", "放大倍数", "视频名称", "调度器步数", "高频Sigmas", "K采样器")
     FUNCTION = "collect"
-    CATEGORY = "H3 / Media"
+    CATEGORY = "H3-Media-Board"
 
     @classmethod
     def IS_CHANGED(cls, noise_mode: str = "fixed", **_kwargs):
@@ -622,7 +622,7 @@ class H3MediaBoardVariableGet:
     RETURN_TYPES = ("*",)
     RETURN_NAMES = ("H3mb_noise",)
     FUNCTION = "get_value"
-    CATEGORY = "H3 / 工具"
+    CATEGORY = "H3-Media-Board"
     DESCRIPTION = "选择 H3mb 内置变量；mediaBorad 获取 H3 生视频模式控制的 media_board 输出，其余变量获取素材板对应输出。"
 
     def get_value(self, variable: str, _h3mb_value: Any = None):
@@ -665,7 +665,7 @@ class H3MediaBoardUnpack:
         + ["prompt", "duration", "width", "height", "frames", "noise", "放大倍数"]
     )
     FUNCTION = "unpack"
-    CATEGORY = "H3 / Media"
+    CATEGORY = "H3-Media-Board"
 
     def unpack(self, media_board: dict[str, Any], ref_image_size="max"):
         manifest = _clean_manifest(media_board)
@@ -756,7 +756,7 @@ class H3ConditionLatentSwitch:
     RETURN_TYPES = ("CONDITIONING", "LATENT", "AUDIO")
     RETURN_NAMES = ("正向条件", "latent", "mux_audio")
     FUNCTION = "route"
-    CATEGORY = "H3 / Media"
+    CATEGORY = "H3-Media-Board"
 
     def check_lazy_status(
         self,
@@ -821,7 +821,7 @@ class H3VideoModeControl:
     RETURN_TYPES = ("BOOLEAN", "H3_MEDIA_BOARD")
     RETURN_NAMES = ("模式开关", "media_board")
     FUNCTION = "control"
-    CATEGORY = "H3 / Media"
+    CATEGORY = "H3-Media-Board"
 
     def control(self, media_board: dict[str, Any], use_image_text: bool):
         # Passing the board through keeps one clean wire path: Media Board →
@@ -897,7 +897,7 @@ class H3SecondPassPreparation:
     RETURN_TYPES = ("MODEL", "CONDITIONING", "LATENT")
     RETURN_NAMES = ("二采模型", "二采正向条件", "二采 latent")
     FUNCTION = "prepare"
-    CATEGORY = "H3 / Media"
+    CATEGORY = "H3-Media-Board"
 
     @staticmethod
     def _target_shape(latent: dict[str, Any]) -> tuple[int, int, int]:
@@ -1064,7 +1064,7 @@ class H3MultiTimeGuide:
     RETURN_TYPES = ("CONDITIONING", "H3_GUIDE_SYNC")
     RETURN_NAMES = ("positive", "二采同步")
     FUNCTION = "guide"
-    CATEGORY = "H3 / Media"
+    CATEGORY = "H3-Media-Board"
 
     def guide(
         self,
@@ -1143,7 +1143,7 @@ class DynamicMediaBoard:
         + [f"音频_{index}" for index in range(1, DYNAMIC_MEDIA_LIMIT + 1)]
     )
     FUNCTION = "collect"
-    CATEGORY = "H3 / Media"
+    CATEGORY = "H3-Media-Board"
 
     def collect(
         self,
@@ -1195,7 +1195,7 @@ class PanoramaViewerSnapshot:
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("截图",)
     FUNCTION = "snapshot"
-    CATEGORY = "H3 / Media"
+    CATEGORY = "H3-Media-Board"
 
     def snapshot(
         self,
@@ -1248,7 +1248,7 @@ class H3UniversalLineSwitch:
     RETURN_TYPES = ("*",)
     RETURN_NAMES = ("输出（任意类型）",)
     FUNCTION = "gate"
-    CATEGORY = "H3 / 工具"
+    CATEGORY = "H3-Media-Board"
     DESCRIPTION = "任意类型的线路开关：通行时透传，断开时输出空值。"
 
     def gate(self, enabled: bool, value: Any = None):
@@ -1281,7 +1281,7 @@ class H3WorkflowSwitchboard:
     RETURN_TYPES = ()
     FUNCTION = "apply"
     OUTPUT_NODE = True
-    CATEGORY = "H3 / Media"
+    CATEGORY = "H3-Media-Board"
     DESCRIPTION = "控制已添加的节点组或 # 编号节点；可启用、绕过及拖拽排序。"
 
     def apply(self, control_state: str = "[]"):

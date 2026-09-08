@@ -84,7 +84,7 @@ class StableMultiLoRALoader:
     RETURN_TYPES = ("MODEL", "CLIP", LORA_CONFIG_SYNC)
     RETURN_NAMES = ("模型", "CLIP", "LoRA 配置同步")
     FUNCTION = "load_loras"
-    CATEGORY = "loaders"
+    CATEGORY = "H3-Media-Board"
     DESCRIPTION = "Stable multi-LoRA loader. Use LoRA count +/- to show rows; each row can be bypassed independently."
 
     def _load_file(self, lora_name):
