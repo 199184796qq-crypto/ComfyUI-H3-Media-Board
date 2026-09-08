@@ -1,6 +1,5 @@
 import asyncio
 import hashlib
-import json
 import os
 from pathlib import Path
 import shutil
@@ -70,11 +69,11 @@ class H3MaterialSync:
     def INPUT_TYPES(cls):
         return {"required": {"media_board": ("H3_MEDIA_BOARD",)}}
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("导入素材清单",)
+    RETURN_TYPES = ()
     FUNCTION = "collect"
     CATEGORY = "H3-Media-Board"
     DESCRIPTION = "连接素材板，在目标时间线下拉框选择节点，再点击同步。同步完成后再运行工作流。"
 
     def collect(self, media_board):
-        return (json.dumps(import_media(media_board), ensure_ascii=False),)
+        import_media(media_board)
+        return ()

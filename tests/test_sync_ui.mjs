@@ -44,5 +44,16 @@ try {
   destination.inputs=[{name:"width",link:99}];
   await bridge.widgets.find(w=>w.name==="同步素材").callback();
   assert.match(bridge.widgets.find(w=>w.name==="状态").value,/连线控制/);
+  destination.inputs=[{name:"timeline_data",link:100}];
+  const saved = destination.__m3td.widget.value;
+  await bridge.widgets.find(w=>w.name==="同步素材").callback();
+  assert.match(bridge.widgets.find(w=>w.name==="状态").value,/timeline_data/);
+  assert.equal(destination.__m3td.widget.value,saved);
+  bridge.outputs=[{name:"导入素材清单",links:[100]}];
+  bridge.removeOutput=function(index){this.outputs.splice(index,1);destination.inputs[0].link=null;};
+  bridge.onConfigure();
+  await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal(bridge.outputs.length,0);
+  assert.equal(destination.inputs[0].link,null);
   console.log("PASS: sync button imports media and width/height/duration only; deduplicates; protects connected dimensions");
 } finally {bridge.onRemoved();}

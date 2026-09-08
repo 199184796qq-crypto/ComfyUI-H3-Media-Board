@@ -2,6 +2,9 @@
 export const targetTypes = new Set(["MiniMaxH3TimelinePlanner", "MiniMaxH3TimelineDirector"]);
 
 export function checkTarget(node) {
+  if (node?.inputs?.some(input => input.name === "timeline_data" && input.link != null)) {
+    throw new Error("请断开目标 timeline_data 的输入连线；同步桥通过下拉选择目标，不需要输出连线");
+  }
   const ui = node?.__m3td;
   if (!targetTypes.has(node?.comfyClass || node?.type) || !ui ||
       typeof ui.sync !== "function" || typeof ui.render !== "function" ||

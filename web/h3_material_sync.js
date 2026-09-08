@@ -120,7 +120,11 @@ app.registerExtension({
     const configure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function() {
       const result = configure?.apply(this, arguments);
-      setTimeout(() => this._h3RestoreSync?.(), 0);
+      setTimeout(() => {
+        // Saved workflows can restore the obsolete STRING output and its link.
+        while (this.outputs?.length) this.removeOutput(this.outputs.length - 1);
+        this._h3RestoreSync?.();
+      }, 0);
       return result;
     };
     const removed = nodeType.prototype.onRemoved;
