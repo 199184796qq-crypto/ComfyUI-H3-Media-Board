@@ -23,6 +23,8 @@ const H3MB_VARIABLE_SPECS = Object.freeze({
   H3mb_scheduler_steps: { type: "INT", slot: 4 },
   H3mb_high_frequency_sigmas: { type: "INT", slot: 5 },
   H3mb_sampler: { type: "SAMPLER", slot: 6 },
+  "存储Clip_本段": { type: "INT", slot: 7 },
+  "加载Clip_上段": { type: "INT", slot: 8 },
 });
 const H3MB_SOURCE_NODE_PROPERTY = "h3mb_source_node_id";
 const H3MB_VALUE_INPUT = "_h3mb_value";
@@ -327,6 +329,25 @@ function updateH3VariableGet(node) {
   node.graph?.setDirtyCanvas?.(true, true);
 }
 
+function refreshH3ClipVariableDisplay(node) {
+  const spec = h3mbVariableSpec(node);
+  const output = node.outputs?.[0];
+  if (!output) return;
+  if (!["存储Clip_本段", "加载Clip_上段"].includes(spec.name)) {
+    output.label = spec.name;
+    return;
+  }
+  const source = resolveH3MediaBoardSource(node);
+  const raw = source?.widgets?.find((widget) => widget.name === "clip_number")?.value;
+  const current = raw == null || !Number.isFinite(Number(raw))
+    ? null : Math.max(1, Math.min(9999, Math.trunc(Number(raw))));
+  const value = current === null ? "未连接素材板"
+    : spec.name === "存储Clip_本段" ? String(current)
+    : current === 1 ? "0（首段不加载）" : String(current - 1);
+  output.label = `${spec.name}：${value}`;
+  node.title = `H3内部变量_${spec.name}：${value}`;
+}
+
 function decorateH3VariableGet(node) {
   const hiddenInputIndex = node.inputs?.findIndex((input) => input.name === H3MB_VALUE_INPUT) ?? -1;
   if (hiddenInputIndex >= 0) node.removeInput?.(hiddenInputIndex);
@@ -343,7 +364,13 @@ function decorateH3VariableGet(node) {
     updateH3VariableGet(node);
     return result;
   };
+  const priorDraw = node.onDrawForeground;
+  node.onDrawForeground = function (...args) {
+    refreshH3ClipVariableDisplay(this);
+    return priorDraw?.apply(this, args);
+  };
   updateH3VariableGet(node);
+  refreshH3ClipVariableDisplay(node);
   const computed = node.computeSize?.() || node.size || [280, 90];
   node.setSize?.([Math.max(280, Number(computed[0]) || 280), Math.max(74, Number(computed[1]) || 90)]);
 }
@@ -367,6 +394,16 @@ function installH3VariablePromptResolver() {
       const spec = h3mbVariableSpec(getter);
       getterPrompt.inputs = getterPrompt.inputs || {};
       getterPrompt.inputs[H3MB_VALUE_INPUT] = [String(source.id), spec.slot];
+    }
+    for (const entry of Object.values(prompt?.output || {})) {
+      if (entry.class_type !== "MiniMaxH3MotionContextLoadLatent") continue;
+      const link = entry.inputs?.clip_index;
+      if (!Array.isArray(link)) continue;
+      const source = prompt.output[String(link[0])];
+      if ((source?.class_type === "H3MediaBoardVariableGet" && source.inputs?.variable === "加载Clip_上段")
+          || (source?.class_type === "H3MediaBoard" && Number(link[1]) === 8)) {
+        entry.inputs.skip_zero = true;
+      }
     }
     return prompt;
   };
@@ -514,6 +551,10 @@ function injectStyle() {
     .h3-media-board .mb-noise-after label { color:#c0b7d2; font-size:11px; font-weight:800; white-space:nowrap; }
     .h3-media-board .mb-noise-after select { flex:0 1 210px; width:210px; min-width:0; height:27px; padding:3px 7px; color:#f1ebff; background:#252038; border:1px solid #74639e; border-radius:4px; outline:none; font:11px system-ui, sans-serif; }
     .h3-media-board .mb-noise-field { display:flex; flex-direction:column; gap:4px; min-width:0; }
+    .h3-media-board .mb-noise.mb-clip-panel { grid-template-columns:1fr; padding:10px 12px; }
+    .h3-media-board .mb-noise-field.mb-clip-field { flex-direction:row; align-items:center; gap:10px; }
+    .h3-media-board .mb-clip-field label { white-space:nowrap; }
+    .h3-media-board .mb-noise-field.mb-clip-field input { width:76px; flex:0 0 76px; }
     .h3-media-board .mb-noise-field label { color:#b7aec9; font-size:10px; font-weight:700; }
     .h3-media-board .mb-noise-field input { box-sizing:border-box; width:100%; height:29px; padding:4px 7px; color:#f3efff; background:#14121d; border:1px solid #675b86; border-radius:5px; outline:none; font:12px ui-monospace, Consolas, monospace; }
     .h3-media-board .mb-noise-action { width:132px; height:29px; padding:0 8px; border:1px solid #645588; border-radius:5px; color:#e9e2ff; background:#332b48; cursor:pointer; font:11px system-ui, sans-serif; white-space:nowrap; }
@@ -1149,6 +1190,33 @@ function makeSchedulerPanel(widgets, node) {
   return panel;
 }
 
+function makeClipPanel(widgets, node) {
+  const panel = document.createElement("div"); panel.className = "mb-noise mb-clip-panel";
+  const field = document.createElement("div"); field.className = "mb-noise-field mb-clip-field";
+  const label = document.createElement("label"); label.textContent = "上下文潜空间第几段";
+  const input = document.createElement("input");
+  input.type = "number"; input.min = "1"; input.max = "9999"; input.step = "1";
+  const status = document.createElement("div"); status.className = "mb-noise-status";
+  const paint = () => {
+    const value = Number(widgets.clip_number.value);
+    const current = Number.isFinite(value) ? Math.max(1, Math.min(9999, Math.trunc(value))) : 1;
+    widgets.clip_number.value = current;
+    input.value = String(current);
+    status.textContent = current === 1
+      ? "存储Clip_本段：1；加载Clip_上段：0。第 1 段不加载上一段 latent，仅存储本段。"
+      : `存储Clip_本段：${current}；加载Clip_上段：${current - 1}。加载第 ${current - 1} 段 Context，存储第 ${current} 段。`;
+  };
+  input.onchange = () => {
+    widgets.clip_number.value = Number(input.value);
+    paint();
+    widgets.clip_number.callback?.(widgets.clip_number.value);
+    node._h3SaveBackup?.();
+    node.graph?.setDirtyCanvas(true, true);
+  };
+  field.append(label, input); panel.append(field, status); paint();
+  return panel;
+}
+
 function makeNoisePanel(widgets, node) {
   const panel = document.createElement("div"); panel.className = "mb-noise";
   const header = document.createElement("div"); header.className = "mb-noise-head";
@@ -1631,9 +1699,12 @@ function createBoard(node) {
     node.addOutput?.("K采样器", "SAMPLER");
     node.graph?.setDirtyCanvas?.(true, true);
   }
+  for (const name of ["存储Clip_本段", "加载Clip_上段"]) {
+    if (!node.outputs?.some((output) => output.name === name)) node.addOutput?.(name, "INT");
+  }
   const manifestWidget = node.widgets?.find((widget) => widget.name === "media_manifest");
   const promptWidget = node.widgets?.find((widget) => widget.name === "prompt");
-  const settingsWidgets = Object.fromEntries(["video_name", "duration", "aspect_ratio", "megapixels", "multiple", "scheduler_steps", "high_sigmas", "sampler_name", "second_pass_scale", "second_pass_size_mode", "second_pass_megapixels", "auto_calculate", "manual_frames", "noise_seed", "noise_mode", "noise_after_generate"].map((name) => [name, node.widgets?.find((widget) => widget.name === name)]));
+  const settingsWidgets = Object.fromEntries(["clip_number", "video_name", "duration", "aspect_ratio", "megapixels", "multiple", "scheduler_steps", "high_sigmas", "sampler_name", "second_pass_scale", "second_pass_size_mode", "second_pass_megapixels", "auto_calculate", "manual_frames", "noise_seed", "noise_mode", "noise_after_generate"].map((name) => [name, node.widgets?.find((widget) => widget.name === name)]));
   const retryWhenWidgetsReady = () => {
     const attempts = node._h3BoardInitAttempts || 0;
     if (attempts >= 8 || node._h3BoardInitScheduled) return;
@@ -2028,7 +2099,7 @@ function createBoard(node) {
           settings: {
             video_name: "video/ComfyUi_", duration: 15, aspect_ratio: "9:16",
             megapixels: 0.4, multiple: 32, scheduler_steps: 8, high_sigmas: 5,
-            sampler_name: "res_multistep", second_pass_scale: 1,
+            sampler_name: "res_multistep", clip_number: 1, second_pass_scale: 1,
             second_pass_size_mode: "倍率放大", second_pass_megapixels: 1,
             auto_calculate: true, manual_frames: 362, noise_seed: 0,
             noise_mode: "fixed", noise_after_generate: "randomize",
@@ -2103,6 +2174,7 @@ function createBoard(node) {
     root.appendChild(makeH3SettingsPanel(settingsWidgets, node, promptWidget));
     root.appendChild(makeSchedulerPanel(settingsWidgets, node));
     root.appendChild(makeNoisePanel(settingsWidgets, node));
+    root.appendChild(makeClipPanel(settingsWidgets, node));
     prompt.refreshReferences?.();
     root.appendChild(prompt);
     root.appendChild(makeHeightResizeHandle());
@@ -3953,6 +4025,22 @@ function createWorkflowSwitchboard(controller) {
 app.registerExtension({
   name: "h3.media_board",
   beforeConfigureGraph(graphData) {
+    for (const node of graphData?.nodes || []) {
+      if (node.type === "H3MediaBoardVariableGet") {
+        if (node.widgets_values?.[0] === "当前Clip_N") node.widgets_values[0] = "存储Clip_本段";
+        if (node.widgets_values_named?.variable === "当前Clip_N") node.widgets_values_named.variable = "存储Clip_本段";
+        if (node.widgets_values?.[0] === "加载Clip_N") node.widgets_values[0] = "加载Clip_上段";
+        if (node.widgets_values_named?.variable === "加载Clip_N") node.widgets_values_named.variable = "加载Clip_上段";
+      }
+      if (node.type === "H3MediaBoard" || node.type === "H3MediaBoardVariableGet") {
+        for (const output of node.outputs || []) {
+          for (const key of ["name", "label", "localized_name"]) {
+            if (output[key] === "加载Clip_N") output[key] = "加载Clip_上段";
+            if (output[key] === "当前Clip_N") output[key] = "存储Clip_本段";
+          }
+        }
+      }
+    }
       // Migrate all legacy second-pass layouts. ComfyUI inserts its automatic
       // seed "after generate" widget before these fields, so their serialized
       // tail begins at index 12 and is: scale, mode, megapixels, video name,
@@ -3972,6 +4060,7 @@ app.registerExtension({
         || legacyTail.slice().reverse().find((value) => H3_SECOND_PASS_SIZE_MODES.has(value))
         || "倍率放大";
       const named = graphNode.widgets_values_named;
+      const clipNumber = Math.max(1, Math.min(9999, Math.trunc(Number(named?.clip_number ?? legacyTail[7]) || 1)));
       const samplerName = typeof named?.sampler_name === "string" && named.sampler_name.trim()
         ? named.sampler_name
         : typeof legacyTail[6] === "string" && legacyTail[6].trim()
@@ -4001,7 +4090,7 @@ app.registerExtension({
 
       // Replace instead of inserting: this also repairs workflows already
       // saved with the former shifted strings in the numeric positions.
-      values.splice(12, values.length - 12, scale, mode, megapixels, videoName, schedulerSteps, highSigmas, samplerName);
+      values.splice(12, values.length - 12, scale, mode, megapixels, videoName, schedulerSteps, highSigmas, samplerName, clipNumber);
 
       // Recent ComfyUI versions also persist a named copy.  Correcting only
       // widgets_values is not enough: the named values otherwise keep sending
@@ -4014,6 +4103,7 @@ app.registerExtension({
         graphNode.widgets_values_named.scheduler_steps = schedulerSteps;
         graphNode.widgets_values_named.high_sigmas = highSigmas;
         graphNode.widgets_values_named.sampler_name = samplerName;
+        graphNode.widgets_values_named.clip_number = clipNumber;
       }
     }
   },

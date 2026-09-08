@@ -44,6 +44,8 @@ H3MB_VARIABLE_NAMES = (
     "H3mb_scheduler_steps",
     "H3mb_high_frequency_sigmas",
     "H3mb_sampler",
+    "存储Clip_本段",
+    "加载Clip_上段",
 )
 
 
@@ -505,6 +507,7 @@ class H3MediaBoard:
                 "scheduler_steps": ("INT", {"default": 8, "min": 1, "max": 100, "step": 1}),
                 "high_sigmas": ("INT", {"default": 5, "min": 0, "max": 100, "step": 1}),
                 "sampler_name": (comfy.samplers.SAMPLER_NAMES, {"default": "res_multistep"}),
+                "clip_number": ("INT", {"default": 1, "min": 1, "max": 9999, "step": 1}),
             },
             # A separate forced input guarantees a visible socket in both the
             # legacy canvas and Nodes 2.0.  The local textarea remains usable
@@ -513,8 +516,8 @@ class H3MediaBoard:
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
-    RETURN_TYPES = ("H3_MEDIA_BOARD", "NOISE", "FLOAT", "STRING", "INT", "INT", "SAMPLER")
-    RETURN_NAMES = ("media_board", "noise", "放大倍数", "视频名称", "调度器步数", "高频Sigmas", "K采样器")
+    RETURN_TYPES = ("H3_MEDIA_BOARD", "NOISE", "FLOAT", "STRING", "INT", "INT", "SAMPLER", "INT", "INT")
+    RETURN_NAMES = ("media_board", "noise", "放大倍数", "视频名称", "调度器步数", "高频Sigmas", "K采样器", "存储Clip_本段", "加载Clip_上段")
     FUNCTION = "collect"
     CATEGORY = "H3-Media-Board"
 
@@ -530,7 +533,7 @@ class H3MediaBoard:
                 second_pass_scale: float = 1.0, second_pass_size_mode: str = "倍率放大",
                 second_pass_megapixels: float = 1.0, video_name: str = "video/ComfyUi_",
                 scheduler_steps: int = 8, high_sigmas: int = 5,
-                sampler_name: str = "res_multistep"):
+                sampler_name: str = "res_multistep", clip_number: int = 1):
         manifest = _clean_manifest(media_manifest)
         effective_prompt = external_prompt if external_prompt is not None else prompt
         manifest["prompt"] = effective_prompt
@@ -560,6 +563,10 @@ class H3MediaBoard:
         settings["scheduler_steps"] = resolved_scheduler_steps
         settings["high_sigmas"] = resolved_high_sigmas
         settings["sampler_name"] = resolved_sampler_name
+        current_clip = max(1, min(9999, int(clip_number)))
+        settings["clip_number"] = current_clip
+        settings["存储Clip_本段"] = current_clip
+        settings["加载Clip_上段"] = current_clip - 1
         manifest["video_name"] = resolved_video_name
         manifest["settings"] = settings
         # UI payload must remain JSON serializable; the executable noise object
@@ -592,7 +599,7 @@ class H3MediaBoard:
             "ui": {"h3_media_board": [manifest]},
             "result": (
                 runtime_manifest, noise, float(settings["second_pass_output_value"]), resolved_video_name,
-                resolved_scheduler_steps, resolved_high_sigmas, sampler,
+                resolved_scheduler_steps, resolved_high_sigmas, sampler, current_clip, current_clip - 1,
             ),
         }
 
@@ -1291,7 +1298,37 @@ class H3WorkflowSwitchboard:
         return {}
 
 
+class H3LatentImageSwitch:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "use_latent": ("BOOLEAN", {"default": True,
+                    "label_on": "Latent", "label_off": "图像"}),
+            },
+            "optional": {
+                "latent": ("LATENT", {"lazy": True}),
+                "image": ("IMAGE", {"lazy": True}),
+            },
+        }
+
+    RETURN_TYPES = ("LATENT", "IMAGE")
+    RETURN_NAMES = ("Latent", "图像")
+    FUNCTION = "switch"
+    CATEGORY = "H3-Media-Board"
+    DESCRIPTION = "互斥切换 Latent / 图像；未选中的输出为空，且不执行未选中的上游。"
+
+    def check_lazy_status(self, use_latent=True, latent=None, image=None):
+        if use_latent:
+            return ["latent"] if latent is None else []
+        return ["image"] if image is None else []
+
+    def switch(self, use_latent=True, latent=None, image=None):
+        return (latent, None) if use_latent else (None, image)
+
+
 NODE_CLASS_MAPPINGS = {
+    "H3LatentImageSwitch": H3LatentImageSwitch,
     "H3MediaBoard": H3MediaBoard,
     "H3MediaBoardVariableGet": H3MediaBoardVariableGet,
     "H3MediaBoardUnpack": H3MediaBoardUnpack,
@@ -1306,6 +1343,7 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "H3LatentImageSwitch": "H3 Latent / 图像互斥切换",
     "H3MediaBoard": "H3 Media Board (9 Image / 3 Audio / 3 Video)",
     "H3MediaBoardVariableGet": "获取 H3mb 内置变量",
     "H3MediaBoardUnpack": "H3 Media Board Outputs",
