@@ -555,7 +555,7 @@ function injectStyle() {
     .h3-media-board .mb-noise-field.mb-clip-field { flex-direction:row; align-items:center; gap:10px; }
     .h3-media-board .mb-clip-field label { white-space:nowrap; }
     .h3-media-board .mb-noise-field.mb-clip-field input { width:76px; flex:0 0 76px; }
-    .h3-media-board .mb-noise-field label { color:#b7aec9; font-size:10px; font-weight:700; }
+    .h3-media-board .mb-noise-field label, .h3-media-board .mb-clip-suffix { color:#b7aec9; font-size:10px; font-weight:700; }
     .h3-media-board .mb-noise-field input { box-sizing:border-box; width:100%; height:29px; padding:4px 7px; color:#f3efff; background:#14121d; border:1px solid #675b86; border-radius:5px; outline:none; font:12px ui-monospace, Consolas, monospace; }
     .h3-media-board .mb-noise-action { width:132px; height:29px; padding:0 8px; border:1px solid #645588; border-radius:5px; color:#e9e2ff; background:#332b48; cursor:pointer; font:11px system-ui, sans-serif; white-space:nowrap; }
     .h3-media-board .mb-noise-action:hover { border-color:#c7b2ff; background:#443862; }
@@ -1193,7 +1193,8 @@ function makeSchedulerPanel(widgets, node) {
 function makeClipPanel(widgets, node) {
   const panel = document.createElement("div"); panel.className = "mb-noise mb-clip-panel";
   const field = document.createElement("div"); field.className = "mb-noise-field mb-clip-field";
-  const label = document.createElement("label"); label.textContent = "上下文潜空间第几段";
+  const label = document.createElement("label"); label.textContent = "上下文潜空间第";
+  const suffix = document.createElement("span"); suffix.className = "mb-clip-suffix"; suffix.textContent = "段";
   const input = document.createElement("input");
   input.type = "number"; input.min = "1"; input.max = "9999"; input.step = "1";
   const status = document.createElement("div"); status.className = "mb-noise-status";
@@ -1213,7 +1214,7 @@ function makeClipPanel(widgets, node) {
     node._h3SaveBackup?.();
     node.graph?.setDirtyCanvas(true, true);
   };
-  field.append(label, input); panel.append(field, status); paint();
+  field.append(label, input, suffix); panel.append(field, status); paint();
   return panel;
 }
 
