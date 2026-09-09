@@ -26,7 +26,9 @@ class H3BoardInputSync:
         return {
             "required": {
                 "target_board": ("STRING", {"default": ""}),
+                "send_image": ("BOOLEAN", {"default": True, "label_on": "投放图片", "label_off": "跳过图片"}),
                 "image_slot": ("INT", {"default": 1, "min": 1, "max": 9}),
+                "send_audio": ("BOOLEAN", {"default": True, "label_on": "投放声音", "label_off": "跳过声音"}),
                 "audio_slot": ("INT", {"default": 1, "min": 1, "max": 3}),
                 "image_batch_index": ("INT", {"default": 0, "min": 0}),
                 "audio_batch_index": ("INT", {"default": 0, "min": 0}),
@@ -43,10 +45,11 @@ class H3BoardInputSync:
     DESCRIPTION = "接入 IMAGE/AUDIO，选择目标素材板和序号，运行后无线同步。批次索引从 0 开始。"
 
     def sync(self, target_board, image_slot, audio_slot, image_batch_index=0,
-             audio_batch_index=0, image=None, audio=None, base_manifest="{}"):
+             audio_batch_index=0, image=None, audio=None, base_manifest="{}",
+             send_image=True, send_audio=True):
         if not target_board:
             raise ValueError("请选择目标 H3 Media Board")
-        if image is None and audio is None:
+        if image is None and audio is None and send_image and send_audio:
             raise ValueError("请至少接入一张图片或一段 AUDIO")
         if not 1 <= image_slot <= 9 or not 1 <= audio_slot <= 3:
             raise ValueError("图片序号为 1–9，音频序号为 1–3")
@@ -54,7 +57,7 @@ class H3BoardInputSync:
         if not isinstance(manifest, dict):
             raise ValueError("素材清单必须是对象")
         updates = []
-        if image is not None:
+        if send_image and image is not None:
             if not 0 <= image_batch_index < image.shape[0]:
                 raise ValueError("图片批次索引超出范围")
             pixels = image[image_batch_index].detach().cpu().float().numpy()
@@ -64,7 +67,7 @@ class H3BoardInputSync:
             buffer = io.BytesIO()
             Image.fromarray(pixels).save(buffer, format="PNG")
             updates.append(("image", image_slot, save_media(buffer.getvalue(), ".png")))
-        if audio is not None:
+        if send_audio and audio is not None:
             waveform = audio["waveform"]
             if waveform.ndim != 3 or not 0 <= audio_batch_index < waveform.shape[0]:
                 raise ValueError("AUDIO 应为 [批次, 声道, 采样]，请检查音频批次索引")

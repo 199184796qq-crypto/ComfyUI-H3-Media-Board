@@ -24,6 +24,10 @@ export function wireSyncPrompt(output) {
     const board = output[target];
     if (board?.class_type !== "H3MediaBoard") throw new Error(`同步桥 #${id}：请选择当前工作流中启用的 H3 Media Board`);
     for (const kind of ["image", "audio"]) {
+      if (entry.inputs[`send_${kind}`] === false) {
+        delete entry.inputs[kind];
+        continue;
+      }
       if (!entry.inputs[kind]) continue;
       const key = `${target}/${kind}/${entry.inputs[`${kind}_slot`]}`;
       if (occupied.has(key)) throw new Error(`多个同步桥写入同一槽位：${key}`);
@@ -48,6 +52,15 @@ export function wireSyncPrompt(output) {
 
 app.registerExtension({
   name: "H3.MediaBoard.InputSync",
+  beforeConfigureGraph(graphData) {
+    for (const node of graphData.nodes || []) {
+      if (node.type !== "H3BoardInputSync" || !Array.isArray(node.widgets_values)) continue;
+      const old = node.widgets_values;
+      if (typeof old[1] !== "boolean") {
+        node.widgets_values = [old[0], true, old[1] ?? 1, true, old[2] ?? 1, old[3] ?? 0, old[4] ?? 0];
+      }
+    }
+  },
   setup() {
     const original = app.graphToPrompt.bind(app);
     app.graphToPrompt = async function(...args) {
@@ -72,6 +85,8 @@ app.registerExtension({
       this.widgets.pop();
       this.widgets[index] = target;
       target.label = "目标素材板（自动识别 / 选择）";
+      if (value(this, "send_image")) value(this, "send_image").label = "投放图片";
+      if (value(this, "send_audio")) value(this, "send_audio").label = "投放声音";
       for (const [name, label] of Object.entries({image_slot:"图片序号 1–9", audio_slot:"音频序号 1–3", image_batch_index:"图片批次索引（从0开始）", audio_batch_index:"音频批次索引（从0开始）"})) value(this, name).label = label;
       this.addWidget("button", "定位目标素材板", null, () => {
         let id;
