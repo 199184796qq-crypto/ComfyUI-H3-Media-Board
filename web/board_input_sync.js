@@ -2,12 +2,25 @@ import {app} from "../../../scripts/app.js";
 
 const value = (node, name) => node.widgets?.find(w => w.name === name);
 const isBoard = node => (node?.comfyClass || node?.type) === "H3MediaBoard";
+const AUTO = "自动识别（唯一素材板）";
+const targetId = raw => String(raw || "").split(" · ")[0];
+
+export function resolveTarget(raw, boards) {
+  if (!raw || raw === AUTO) {
+    if (boards.length !== 1) throw new Error(boards.length ? "存在多个素材板，请在目标下拉框选择一个" : "请先添加并启用 H3 Media Board");
+    return String(boards[0]);
+  }
+  const id = targetId(raw);
+  if (!boards.map(String).includes(id)) throw new Error(`目标素材板 #${id} 不存在或未启用，请重新选择`);
+  return id;
+}
 
 export function wireSyncPrompt(output) {
   const occupied = new Set();
   for (const [id, entry] of Object.entries(output)) {
     if (entry.class_type !== "H3BoardInputSync") continue;
-    const target = String(entry.inputs.target_board || "");
+    const target = resolveTarget(entry.inputs.target_board, Object.keys(output).filter(id => output[id].class_type === "H3MediaBoard"));
+    entry.inputs.target_board = target;
     const board = output[target];
     if (board?.class_type !== "H3MediaBoard") throw new Error(`同步桥 #${id}：请选择当前工作流中启用的 H3 Media Board`);
     for (const kind of ["image", "audio"]) {
@@ -50,13 +63,21 @@ app.registerExtension({
       const result = created?.apply(this, args);
       const hidden = this.inputs?.findIndex(i => i.name === "base_manifest") ?? -1;
       if (hidden >= 0) this.removeInput(hidden);
-      const target = value(this, "target_board");
-      target.type = "combo";
-      target.options = {values: () => ["", ...(this.graph?._nodes || []).filter(isBoard).map(n => String(n.id))]};
-      target.label = "目标素材板 ID";
+      const oldTarget = value(this, "target_board");
+      const index = this.widgets.indexOf(oldTarget);
+      // Create a real combo: changing a STRING widget's type leaves its text renderer intact.
+      const target = this.addWidget("combo", "target_board", oldTarget.value || AUTO, () => {}, {
+        values: () => [AUTO, ...(this.graph?._nodes || []).filter(isBoard).map(n => `${n.id} · ${n.title || "H3 Media Board"}`)],
+      });
+      this.widgets.pop();
+      this.widgets[index] = target;
+      target.label = "目标素材板（自动识别 / 选择）";
       for (const [name, label] of Object.entries({image_slot:"图片序号 1–9", audio_slot:"音频序号 1–3", image_batch_index:"图片批次索引（从0开始）", audio_batch_index:"音频批次索引（从0开始）"})) value(this, name).label = label;
       this.addWidget("button", "定位目标素材板", null, () => {
-        const board = this.graph?.getNodeById(target.value);
+        let id;
+        try { id = resolveTarget(target.value, (this.graph?._nodes || []).filter(isBoard).map(n => n.id)); }
+        catch (error) { app.ui.dialog.show(error.message); return; }
+        const board = this.graph?.getNodeById(id);
         if (isBoard(board)) { app.canvas?.centerOnNode(board); app.canvas?.selectNode(board); }
       }, {serialize:false});
       this.setSize([340, this.computeSize()[1]]);
@@ -66,7 +87,11 @@ app.registerExtension({
     nodeType.prototype.onExecuted = function(message, ...args) {
       const result = executed?.call(this, message, ...args);
       const payload = message?.h3_input_sync?.[0];
-      if (!payload || String(value(this, "target_board").value) !== payload.target) return result;
+      if (!payload) return result;
+      let selected;
+      try { selected = resolveTarget(value(this, "target_board").value, (this.graph?._nodes || []).filter(isBoard).map(n => n.id)); }
+      catch { return result; }
+      if (selected !== payload.target) return result;
       const board = this.graph?.getNodeById(payload.target);
       if (!isBoard(board)) return result;
       const widget = value(board, "media_manifest");
