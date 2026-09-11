@@ -1282,7 +1282,7 @@ function makePromptEditor(promptWidget, node, getState, saveBackup, onPromptChan
   actions.className = "mb-prompt-actions";
   const help = document.createElement("span");
   help.className = "mb-prompt-help";
-  help.textContent = "提示词说明：按住空格键+鼠标滚轮可上下滚动提示词，@可以呼出素材，鼠标放在关键词能显示素材，中键点击音频或视频标签可播放/暂停，按住 Ctrl 可操作预览控件。提示词优先锁定视频比例";
+  help.textContent = "提示词说明：@可以呼出素材，鼠标放在关键词能显示素材，中键点击音频或视频标签可播放/暂停，按住 Ctrl 可操作预览控件。提示词优先锁定视频比例";
   const editor = document.createElement("div");
   editor.className = "mb-prompt-editor";
   editor.contentEditable = "true";
@@ -1870,22 +1870,15 @@ function createBoard(node) {
   const prompt = makePromptEditor(promptWidget, node, () => readOutputManifest(manifestWidget), saveBackup, applyPromptOverrides);
   applyPromptOverrides(String(promptWidget.value || ""));
   root.onpointerdown = (event) => { if (!prompt.contains(event.target)) root.focus({ preventScroll: true }); };
-  let promptScrollSpaceHeld = false;
-  const trackPromptScrollSpace = (event) => {
-    if (event.code === "Space") promptScrollSpaceHeld = event.type === "keydown";
-  };
-  const clearPromptScrollSpace = () => { promptScrollSpaceHeld = false; };
-  window.addEventListener("keydown", trackPromptScrollSpace, true);
-  window.addEventListener("keyup", trackPromptScrollSpace, true);
-  window.addEventListener("blur", clearPromptScrollSpace);
-  // Space+wheel inside the prompt is reserved for reading its
+  // DOM widgets sit above LiteGraph's canvas, so their children normally eat
+  // the wheel event. Ctrl+wheel inside the prompt is reserved for reading its
   // long text; every other wheel gesture continues to control the canvas.
   root.addEventListener("wheel", (event) => {
     // The @ picker is deliberately the exception: it has its own fixed-height
     // list, so wheel input over it must scroll its media choices.
     if (event.target.closest?.(".mb-mention-menu")) return;
     const promptEditor = event.target.closest?.(".mb-prompt-editor");
-    if (promptScrollSpaceHeld && promptEditor) {
+    if (event.ctrlKey && promptEditor) {
       event.preventDefault(); event.stopPropagation();
       const unit = event.deltaMode === 1 ? 18 : event.deltaMode === 2 ? promptEditor.clientHeight : 1;
       promptEditor.scrollTop += event.deltaY * unit;
@@ -2037,9 +2030,6 @@ function createBoard(node) {
   const priorRemoved = node.onRemoved;
   node.onRemoved = function (...args) {
     stopMiddlePan();
-    window.removeEventListener("keydown", trackPromptScrollSpace, true);
-    window.removeEventListener("keyup", trackPromptScrollSpace, true);
-    window.removeEventListener("blur", clearPromptScrollSpace);
     clearTimeout(autoSaveTimer);
     cancelConfirmation();
     document.removeEventListener("pointerdown", cancelOutsideConfirmation, true);
