@@ -2984,6 +2984,20 @@ function removeLegacyConditionBoardPort(node) {
   }
 }
 
+function decorateAudioOutputSwitch(node) {
+  const labels = { source_audio: "原音频", use_source_audio: "使用原音频", generated_audio: "生成音频" };
+  const order = Object.keys(labels);
+  node.inputs?.sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
+  node.inputs?.forEach((input, index) => {
+    input.label = labels[input.name] || input.name;
+    const link = input.link != null ? node.graph?.links?.[input.link] : null;
+    if (link) link.target_slot = index;
+  });
+  const output = node.outputs?.find((item) => item.name === "audio");
+  if (output) output.label = "输出音频";
+  node.graph?.setDirtyCanvas?.(true, true);
+}
+
 function decorateConditionLatentSwitch(node) {
   if (!node.outputs?.some((output) => output.name === "mux_audio")) {
     node.addOutput("mux_audio", "AUDIO");
@@ -4224,6 +4238,7 @@ app.registerExtension({
     };
   },
   nodeCreated(node) {
+    if (node.comfyClass === "H3AudioOutputSwitch") decorateAudioOutputSwitch(node);
     if (node.comfyClass === "H3MediaBoard") createBoard(node);
     if (node.comfyClass === "H3MediaBoardVariableGet") requestAnimationFrame(() => decorateH3VariableGet(node));
     if (node.comfyClass === "DynamicMediaBoard") createDynamicMediaBoard(node);
@@ -4240,6 +4255,7 @@ app.registerExtension({
     }
   },
   loadedGraphNode(node) {
+    if (node.comfyClass === "H3AudioOutputSwitch") decorateAudioOutputSwitch(node);
     if (node.comfyClass === "DynamicMediaBoard") {
       requestAnimationFrame(() => {
         createDynamicMediaBoard(node);
