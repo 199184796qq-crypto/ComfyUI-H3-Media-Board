@@ -443,7 +443,7 @@ function injectStyle() {
     .h3-dynamic-media-board .mb-title { margin-top:10px; }
     .h3-media-board .mb-title { margin: 8px 0 5px; color:#c9c9c9; font-weight:700; }
     .h3-media-board .mb-row { display:flex; gap:7px; min-height:78px; }
-    .h3-media-board .mb-media-heading { display:flex; align-items:center; justify-content:space-between; }
+    .h3-media-board .mb-media-heading { display:flex; align-items:center; justify-content:flex-start; gap:12px; }
     .h3-media-board .mb-media-reset { box-sizing:border-box; height:20px; padding:0 8px; border:1px solid #714556; border-radius:5px; background:#342332; color:#e6aab6; font:11px system-ui,sans-serif; cursor:pointer; }
     .h3-media-board .mb-media-reset:hover { background:#492e40; border-color:#cf788f; color:#ffdbe3; }
     .h3-media-board .mb-media-reset:focus-visible { outline:2px solid #85e9ff; outline-offset:2px; }
@@ -541,6 +541,7 @@ function injectStyle() {
     .h3-media-board .mb-versions .mb-versions-clear { color:#829dad; border-color:transparent; background:transparent; }
     .h3-media-board .mb-versions .mb-versions-delete:hover:not(:disabled) { color:#ffdbe3; border-color:#cf788f; background:#492e40; box-shadow:none; }
     .h3-media-board .mb-versions button:disabled { cursor:not-allowed; opacity:.35; }
+    .h3-media-board .mb-versions button.mb-confirming, .h3-media-board .mb-versions button.mb-confirming:hover:not(:disabled) { color:#ffdbe3; border-color:#cf788f; background:#492e40; box-shadow:none; }
     /* Keep the seed controls as a compact toolbar.  The panel may be wide,
        but its controls must not stretch simply to fill available space. */
     .h3-media-board .mb-noise { position:relative; display:grid; grid-template-columns:minmax(220px,280px) repeat(3, max-content); justify-content:start; gap:8px; align-items:end; margin:16px 0 2px; padding:27px 12px 11px; border:1px solid #685b91; border-radius:9px; background:linear-gradient(145deg,#282338 0%,#1b1925 100%); box-shadow:inset 0 1px #ffffff08, 0 2px 8px #0004; }
@@ -1784,6 +1785,30 @@ function createBoard(node) {
   repairLegacySettings();
 
   const root = document.createElement("div"); root.className = "h3-media-board"; root.tabIndex = 0;
+  let pendingConfirmation = null;
+  const cancelConfirmation = () => {
+    if (!pendingConfirmation) return;
+    clearTimeout(pendingConfirmation.timer);
+    pendingConfirmation.button.textContent = pendingConfirmation.label;
+    pendingConfirmation.button.classList.remove("mb-confirming");
+    pendingConfirmation = null;
+  };
+  const confirmAction = (button, label) => {
+    if (pendingConfirmation?.button === button && Date.now() < pendingConfirmation.expiresAt) {
+      cancelConfirmation();
+      return true;
+    }
+    cancelConfirmation();
+    pendingConfirmation = { button, label: button.textContent, expiresAt: Date.now() + 3000, timer: setTimeout(cancelConfirmation, 3000) };
+    button.textContent = label;
+    button.classList.add("mb-confirming");
+    return false;
+  };
+  const cancelOutsideConfirmation = (event) => {
+    if (pendingConfirmation && !pendingConfirmation.button.contains(event.target)) cancelConfirmation();
+  };
+  document.addEventListener("pointerdown", cancelOutsideConfirmation, true);
+  document.addEventListener("click", cancelOutsideConfirmation, true);
   const minSize = [930, 1514];
   const fixedWidth = minSize[0];
   const cloneSnapshot = (value) => JSON.parse(JSON.stringify(value));
@@ -1796,6 +1821,7 @@ function createBoard(node) {
     const stored = node.properties?.[BOARD_VERSIONS_PROPERTY] || {};
     return {
       collapsed: stored.collapsed !== false,
+      auto_save_minutes: Number.isFinite(stored.auto_save_minutes) && stored.auto_save_minutes >= 1 && stored.auto_save_minutes <= 1440 ? stored.auto_save_minutes : 5,
       current: stored.current || null,
       entries: Array.isArray(stored.entries) ? stored.entries.filter((entry) => entry?.id && entry?.snapshot).slice(0, 20) : [],
     };
@@ -1808,10 +1834,21 @@ function createBoard(node) {
     const backup = snapshot();
     node.properties = node.properties || {};
     node.properties[BOARD_SAVE_PROPERTY] = backup;
-    const versions = readVersions();
-    versions.current = { saved_at: Date.now(), snapshot: cloneSnapshot(backup) };
-    saveVersions(versions);
     try { sessionStorage.setItem(sessionKey, JSON.stringify(backup)); } catch (_) { /* storage can be unavailable */ }
+  };
+  let autoSaveTimer = null;
+  let refreshAutoSaveUI = () => {};
+  const scheduleAutoSave = () => {
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(() => {
+      const versions = readVersions();
+      versions.current = { saved_at: Date.now(), snapshot: cloneSnapshot(snapshot()) };
+      saveVersions(versions);
+      saveBackup();
+      refreshAutoSaveUI();
+      node.graph?.setDirtyCanvas?.(true, true);
+      scheduleAutoSave();
+    }, readVersions().auto_save_minutes * 60000);
   };
   const applyPromptOverrides = (value) => {
     const overrides = promptH3Overrides(value);
@@ -1987,6 +2024,10 @@ function createBoard(node) {
   const priorRemoved = node.onRemoved;
   node.onRemoved = function (...args) {
     stopMiddlePan();
+    clearTimeout(autoSaveTimer);
+    cancelConfirmation();
+    document.removeEventListener("pointerdown", cancelOutsideConfirmation, true);
+    document.removeEventListener("click", cancelOutsideConfirmation, true);
     prompt.disposeReferencePreview?.();
     document.removeEventListener("dragover", captureDragOver, true);
     document.removeEventListener("drop", captureDrop, true);
@@ -2006,13 +2047,15 @@ function createBoard(node) {
     saveBackup(); render(); node.graph?.setDirtyCanvas(true, true);
   };
   const appendVersionManager = () => {
-    const versions = readVersions();
+    let versions = readVersions();
     const panel = document.createElement("div"); panel.className = "mb-versions";
     const head = document.createElement("div"); head.className = "mb-versions-head";
     const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "mb-versions-toggle";
     toggle.textContent = `${versions.collapsed ? "▸" : "▾"} 版本管理`;
     const current = document.createElement("span"); current.className = "mb-versions-current";
-    current.textContent = versions.current ? `当前状态 · ${versionTime(versions.current.saved_at)}` : "当前状态";
+    const autoSaveLabel = () => versions.current ? `自动保存 · ${versionTime(versions.current.saved_at)}` : "自动保存（等待首次保存）";
+    refreshAutoSaveUI = () => { versions = readVersions(); current.textContent = autoSaveLabel(); };
+    refreshAutoSaveUI();
     toggle.onclick = (event) => {
       stop(event); versions.collapsed = !versions.collapsed; saveVersions(versions); render();
     };
@@ -2020,7 +2063,7 @@ function createBoard(node) {
     if (!versions.collapsed) {
       const body = document.createElement("div"); body.className = "mb-versions-body";
       const select = document.createElement("select");
-      const currentOption = document.createElement("option"); currentOption.value = "current"; currentOption.textContent = "当前最新状态（系统自动保留）"; select.appendChild(currentOption);
+      const currentOption = document.createElement("option"); currentOption.value = "current"; currentOption.textContent = autoSaveLabel(); select.appendChild(currentOption);
       versions.entries.forEach((entry) => {
         const option = document.createElement("option"); option.value = entry.id;
         const note = String(entry.note || "").replace(/\s+/g, " ").trim();
@@ -2033,13 +2076,20 @@ function createBoard(node) {
       select.value = node._h3VersionSelection || "current";
       select.title = select.selectedOptions[0]?.title || "";
       select.onchange = () => {
+        cancelConfirmation();
         select.title = select.selectedOptions[0]?.title || "";
         node._h3VersionSelection = select.value;
-        load.disabled = !select.value;
+        load.disabled = !select.value || (select.value === "current" && !versions.current);
         remove.disabled = select.value === "current";
       };
       const load = document.createElement("button"); load.type = "button"; load.textContent = "加载版本";
-      load.disabled = !select.value;
+      load.disabled = !select.value || (select.value === "current" && !versions.current);
+      refreshAutoSaveUI = () => {
+        versions = readVersions();
+        current.textContent = autoSaveLabel();
+        currentOption.textContent = autoSaveLabel();
+        load.disabled = !select.value || (select.value === "current" && !versions.current);
+      };
       load.onclick = (event) => {
         stop(event);
         const selected = select.value === "current" ? versions.current : versions.entries.find((entry) => entry.id === select.value);
@@ -2059,6 +2109,7 @@ function createBoard(node) {
       remove.onclick = (event) => {
         stop(event); const selected = node._h3VersionSelection || "current";
         if (selected === "current") return;
+        if (!confirmAction(remove, "再次点击确认删除")) return;
         versions.entries = versions.entries.filter((entry) => entry.id !== selected);
         node._h3VersionSelection = "current"; saveVersions(versions); render();
       };
@@ -2071,18 +2122,32 @@ function createBoard(node) {
       clearVersions.disabled = versions.entries.length === 0;
       clearVersions.onclick = (event) => {
         stop(event);
-        if (!window.confirm("确定清空所有已保存的版本记录吗？此操作无法撤销，当前素材和参数会保留。")) return;
+        if (!confirmAction(clearVersions, "再次点击确认清空")) return;
         const latest = readVersions();
         latest.entries = [];
         node._h3VersionSelection = "current";
         saveVersions(latest); saveBackup(); render();
         node.graph?.setDirtyCanvas?.(true, true);
       };
-      actions.append(clearVersions); panel.appendChild(actions);
+      const intervalLabel = document.createElement("label");
+      intervalLabel.style.cssText = "display:flex;align-items:center;gap:6px;margin-left:auto;color:#88abbc;font-size:11px";
+      const interval = document.createElement("input"); interval.type = "number"; interval.min = "1"; interval.max = "1440"; interval.step = "1";
+      interval.value = String(versions.auto_save_minutes);
+      interval.style.cssText = "width:56px;height:24px;box-sizing:border-box;background:#142431;color:#dcebf5;border:1px solid #385467;border-radius:6px;padding:3px";
+      interval.title = "每隔多少分钟自动保存一次（1–1440 分钟）；修改后重新计时，仅覆盖自动保存版本。";
+      interval.onchange = () => {
+        const minutes = Number(interval.value);
+        if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) { interval.value = String(versions.auto_save_minutes); return; }
+        versions = readVersions(); versions.auto_save_minutes = minutes; saveVersions(versions);
+        scheduleAutoSave(); node.graph?.setDirtyCanvas?.(true, true);
+      };
+      intervalLabel.append("每", interval, "分钟自动保存 · 仅保留一份");
+      actions.append(clearVersions, intervalLabel); panel.appendChild(actions);
     }
     root.appendChild(panel);
   };
   const render = () => {
+    cancelConfirmation();
     const state = readManifest(manifestWidget); root.replaceChildren();
     appendVersionManager();
     for (const kind of ["image", "audio", "video"]) {
@@ -2107,7 +2172,7 @@ function createBoard(node) {
           },
         } });
       };
-        title.appendChild(reset);
+        title.prepend(reset);
       }
       const row = document.createElement("div");
       // Images are deliberately a 3 × 3 grid. Audio and video stay as three fixed cards in one row.
@@ -2253,6 +2318,7 @@ function createBoard(node) {
   domWidget.serialize = false;
   node.size = [Math.max(minSize[0], node.size[0]), Math.max(minSize[1], node.size[1])];
   node.setSize?.(node.size);
+  scheduleAutoSave();
   return domWidget;
 }
 
