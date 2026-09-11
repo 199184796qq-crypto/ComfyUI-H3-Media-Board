@@ -2988,6 +2988,12 @@ function decorateConditionLatentSwitch(node) {
   if (!node.outputs?.some((output) => output.name === "mux_audio")) {
     node.addOutput("mux_audio", "AUDIO");
   }
+  if (!node.outputs?.some((output) => output.name === "original_audio")) {
+    node.addOutput("original_audio", "AUDIO");
+  }
+  if (!node.outputs?.some((output) => output.name === "use_source_audio")) {
+    node.addOutput("use_source_audio", "BOOLEAN");
+  }
   if (node._h3ConditionSwitchDecorated) return;
   removeLegacyConditionBoardPort(node);
   const modeWidget = node.widgets?.find((widget) => widget.name === "use_image_text");

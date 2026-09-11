@@ -757,14 +757,14 @@ class H3ConditionLatentSwitch:
                 "external_switch": ("BOOLEAN", {"forceInput": True, "tooltip": "外部开关；接入后优先于本节点开关。"}),
                 "audio_mode": (["native", "lock_source", "remix_source"], {"default": "native", "tooltip": "native：原生音频；lock_source：锁定源音频；remix_source：按去噪强度重混源音频。"}),
                 "audio_denoise_strength": ("FLOAT", {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "仅重混模式生效：0 保留源音频 Latent，1 完全去噪重生成。"}),
-                "drive_audio": ("AUDIO", {"tooltip": "用于锁定或重混的源音频；时长按目标 Latent 截断或补齐。"}),
+                "drive_audio": ("AUDIO", {"tooltip": "接素材板拆出的 audio_1 或加载的原音频；原样输出到 original_audio，可接外部音频驱动节点。"}),
                 "audio_vae": ("VAE", {"tooltip": "MiniMax H3 音频 VAE；锁定或重混模式需要。"}),
                 "final_audio": ("AUDIO", {"tooltip": "最终合成音轨，直接输出到 mux_audio；不参与采样。未连接时输出 drive_audio。"}),
             },
         }
 
-    RETURN_TYPES = ("CONDITIONING", "LATENT", "AUDIO")
-    RETURN_NAMES = ("正向条件", "latent", "mux_audio")
+    RETURN_TYPES = ("CONDITIONING", "LATENT", "AUDIO", "AUDIO", "BOOLEAN")
+    RETURN_NAMES = ("正向条件", "latent", "mux_audio", "original_audio", "use_source_audio")
     FUNCTION = "route"
     CATEGORY = "H3-Media-Board"
 
@@ -805,7 +805,38 @@ class H3ConditionLatentSwitch:
             conditioning, latent = multi_reference_conditioning, multi_reference_latent
         latent = control_audio(latent, audio_mode, audio_denoise_strength, drive_audio, audio_vae)
         mux_audio = final_audio if final_audio is not None else drive_audio
-        return (conditioning, latent, mux_audio)
+        return (conditioning, latent, mux_audio, drive_audio, audio_mode == "lock_source")
+
+
+class H3AudioOutputSwitch:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "use_source_audio": ("BOOLEAN", {"forceInput": True, "tooltip": "接 H3 条件与 Latent 切换的 use_source_audio；锁定模式使用原音频，原生和重混模式使用生成音频。"}),
+            },
+            "optional": {
+                "generated_audio": ("AUDIO", {"lazy": True, "tooltip": "接音频 VAE 解码后的生成音频。"}),
+                "source_audio": ("AUDIO", {"lazy": True, "tooltip": "接切换节点的 original_audio；需要替换合成音轨时可接 mux_audio。"}),
+            },
+        }
+
+    RETURN_TYPES = ("AUDIO",)
+    RETURN_NAMES = ("audio",)
+    FUNCTION = "select"
+    CATEGORY = "H3-Media-Board"
+    DESCRIPTION = "跟随音频驱动模式选择最终音轨；输出接音画同步裁剪节点，未选中的音频分支不执行。"
+
+    def check_lazy_status(self, use_source_audio, generated_audio=None, source_audio=None):
+        if use_source_audio:
+            return ["source_audio"] if source_audio is None else []
+        return ["generated_audio"] if generated_audio is None else []
+
+    def select(self, use_source_audio, generated_audio=None, source_audio=None):
+        audio = source_audio if use_source_audio else generated_audio
+        if audio is None:
+            raise ValueError("请连接原音频 source_audio。" if use_source_audio else "请连接生成音频 generated_audio。")
+        return (audio,)
 
 
 class H3VideoModeControl:
@@ -1331,6 +1362,7 @@ class H3LatentImageSwitch:
 
 
 NODE_CLASS_MAPPINGS = {
+    "H3AudioOutputSwitch": H3AudioOutputSwitch,
     "H3LatentImageSwitch": H3LatentImageSwitch,
     "H3MediaBoard": H3MediaBoard,
     "H3MediaBoardVariableGet": H3MediaBoardVariableGet,
@@ -1346,6 +1378,7 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "H3AudioOutputSwitch": "H3 原音频 / 生成音频自动切换",
     "H3LatentImageSwitch": "H3 Latent / 图像互斥切换",
     "H3MediaBoard": "H3 Media Board (9 Image / 3 Audio / 3 Video)",
     "H3MediaBoardVariableGet": "获取 H3mb 内置变量",
