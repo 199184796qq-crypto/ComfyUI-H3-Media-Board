@@ -572,6 +572,9 @@ class H3MediaBoard:
         # UI payload must remain JSON serializable; the executable noise object
         # travels only through the in-memory board output to the unpack node.
         runtime_manifest = dict(manifest)
+        # Board slots stay fixed in the UI; downstream image indexes and prompt
+        # references use only the populated images in their displayed order.
+        runtime_manifest["image"] = [item for item in manifest["image"] if item is not None]
         noise = _H3SeedNoise(effective_seed)
         sampler = comfy.samplers.sampler_object(resolved_sampler_name)
         runtime_manifest["_noise_object"] = noise

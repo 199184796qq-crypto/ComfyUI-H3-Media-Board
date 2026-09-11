@@ -212,6 +212,12 @@ function readManifest(widget) {
   }
 }
 
+function readOutputManifest(widget) {
+  const state = readManifest(widget);
+  state.image = state.image.filter(Boolean);
+  return state;
+}
+
 function compactMedia(state, kind) {
   if (kind === "image") {
     const images = Array.isArray(state.image) ? state.image.slice(0, LIMITS.image) : [];
@@ -1861,7 +1867,7 @@ function createBoard(node) {
     node._h3RefreshSettingsPanel?.();
     node.graph?.setDirtyCanvas?.(true, true);
   };
-  const prompt = makePromptEditor(promptWidget, node, () => readManifest(manifestWidget), saveBackup, applyPromptOverrides);
+  const prompt = makePromptEditor(promptWidget, node, () => readOutputManifest(manifestWidget), saveBackup, applyPromptOverrides);
   applyPromptOverrides(String(promptWidget.value || ""));
   root.onpointerdown = (event) => { if (!prompt.contains(event.target)) root.focus({ preventScroll: true }); };
   // DOM widgets sit above LiteGraph's canvas, so their children normally eat
@@ -2173,6 +2179,17 @@ function createBoard(node) {
         } });
       };
         title.prepend(reset);
+        const sequenceLabel = document.createElement("label");
+        sequenceLabel.style.cssText = "display:flex;align-items:center;gap:5px;margin-left:auto;font-size:12px;cursor:pointer";
+        const sequence = document.createElement("input"); sequence.type = "checkbox";
+        sequence.checked = node.properties?.h3_image_auto_sequence !== false;
+        sequenceLabel.title = "勾选时删除图片后自动前移补位；取消勾选时保留空位和其他图片编号。";
+        sequence.onchange = () => {
+          node.properties = node.properties || {};
+          node.properties.h3_image_auto_sequence = sequence.checked;
+          saveBackup(); node.graph?.setDirtyCanvas?.(true, true);
+        };
+        sequenceLabel.append(sequence, "自动序列"); title.appendChild(sequenceLabel);
       }
       const row = document.createElement("div");
       // Images are deliberately a 3 × 3 grid. Audio and video stay as three fixed cards in one row.
@@ -2180,12 +2197,12 @@ function createBoard(node) {
       row.dataset.h3MediaKind = kind;
       for (let index = 0; index < LIMITS[kind]; index++) {
         row.appendChild(makeCard(kind, index, state[kind][index], (uploaded) => {
-          compactMedia(state, kind);
+          if (kind !== "image") compactMedia(state, kind);
           if (kind === "image") {
             if (uploaded) state.image[index] = uploaded;
             // Slot 1 is allowed to remain blank.  For slot 2 onward splice
             // pulls the following images up, preserving a continuous tail.
-            else if (index === 0) state.image[0] = null;
+            else if (index === 0 || node.properties?.h3_image_auto_sequence === false) state.image[index] = null;
             else state.image.splice(index, 1);
           } else if (kind === "audio") {
             // Unlike images and videos, audio cues are independent slots. A
@@ -2200,7 +2217,7 @@ function createBoard(node) {
           } else state[kind].splice(index, 1);
           // Images preserve the intentional first-frame gap and audio keeps
           // all three independent cue positions; video remains consecutive.
-          compactMedia(state, kind);
+          if (kind !== "image" || node.properties?.h3_image_auto_sequence !== false) compactMedia(state, kind);
           persist(state); render();
         }, {
           onReorder: (fromIndex) => {
@@ -2649,7 +2666,7 @@ function decorateUnpacker(node) {
     };
     const source = findOriginalBoard(directSource);
     const widget = source?.widgets?.find((w) => w.name === "media_manifest");
-    const state = widget ? readManifest(widget) : { image: [], audio: [], video: [] };
+    const state = widget ? readOutputManifest(widget) : { image: [], audio: [], video: [] };
     const valueOf = (name, fallback) => source?.widgets?.find((w) => w.name === name)?.value ?? fallback;
     node._h3Settings = h3Settings(
       valueOf("duration", 15), valueOf("aspect_ratio", "9:16"),
