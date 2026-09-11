@@ -1681,6 +1681,28 @@ function makePromptEditor(promptWidget, node, getState, saveBackup, onPromptChan
   return shell;
 }
 
+function boardAudioModeTargets(board) {
+  const reachesBoard = (node, visited = new Set()) => {
+    if (!node || visited.has(node)) return false;
+    if (node === board) return true;
+    if (node.comfyClass === "H3MediaBoard") return false;
+    visited.add(node);
+    if (node.comfyClass === "H3MediaBoardVariableGet") {
+      return reachesBoard(resolveH3MediaBoardSource(node), visited);
+    }
+    return (node.inputs || []).some((input, index) => {
+      if (input.link == null) return false;
+      const source = node.getInputNode?.(index)
+        || node.graph?.getNodeById(node.graph.links?.[input.link]?.origin_id);
+      return reachesBoard(source, visited);
+    });
+  };
+  return (board.graph?._nodes || [])
+    .filter((node) => node.comfyClass === "H3ConditionLatentSwitch" && reachesBoard(node))
+    .map((node) => ({ node, widget: node.widgets?.find((widget) => widget.name === "audio_mode") }))
+    .filter(({ widget }) => widget);
+}
+
 function createBoard(node) {
   if (node._h3BoardCreated) return;
   injectStyle();
@@ -2158,6 +2180,26 @@ function createBoard(node) {
     appendVersionManager();
     for (const kind of ["image", "audio", "video"]) {
       const title = document.createElement("div"); title.className = "mb-title"; title.textContent = `${LABELS[kind]} · ${LIMITS[kind]}`; root.appendChild(title);
+      if (kind === "audio") {
+        title.style.cssText = "display:flex;align-items:center;gap:12px";
+        const select = document.createElement("select");
+        select.className = "mb-audio-mode";
+        select.setAttribute("aria-label", "音频模式");
+        select.style.cssText = "height:26px;max-width:280px;background:#202528;color:#ddd;border:1px solid #50575d;border-radius:6px;padding:2px 8px;font-size:12px";
+        for (const [value, label] of [["native", "原生音频"], ["lock_source", "锁定源音频"], ["remix_source", "重混源音频"]]) {
+          select.appendChild(new Option(`${label} · ${value}`, value));
+        }
+        select.onpointerdown = (event) => event.stopPropagation();
+        select.onchange = (event) => {
+          event.stopPropagation();
+          for (const target of boardAudioModeTargets(node)) {
+            target.widget.value = select.value;
+            target.widget.callback?.(select.value);
+          }
+          node.graph?.setDirtyCanvas?.(true, true);
+        };
+        title.appendChild(select);
+      }
       if (kind === "image") {
         title.classList.add("mb-media-heading");
       const reset = document.createElement("button");
@@ -2263,6 +2305,18 @@ function createBoard(node) {
     root.appendChild(makeHeightResizeHandle());
   };
   node._h3RenderBoard = render;
+  const priorAudioModeDraw = node.onDrawForeground;
+  node.onDrawForeground = function (...args) {
+    priorAudioModeDraw?.apply(this, args);
+    const select = root.querySelector(".mb-audio-mode");
+    if (!select) return;
+    const targets = boardAudioModeTargets(node);
+    select.disabled = !targets.length;
+    select.title = targets.length ? "同步切换已连接节点的 audio_mode" : "请先连接 H3 条件/Latent 切换节点";
+    const value = targets[0]?.widget.value;
+    const mixed = targets.some((target) => target.widget.value !== value);
+    select.value = mixed ? "" : value || "native";
+  };
   node._h3SetPromptText = (value) => {
     prompt.setText?.(value);
     applyPromptOverrides(value);
