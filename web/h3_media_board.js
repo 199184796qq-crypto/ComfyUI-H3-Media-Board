@@ -4256,6 +4256,9 @@ app.registerExtension({
       const priorConfigure = nodeType.prototype.onConfigure;
       nodeType.prototype.onConfigure = function (...args) {
         const result = priorConfigure?.apply(this, args);
+        if (["H3-Media-Board", "H3 Media Board", "H3 Media Board (9 Image / 3 Audio / 3 Video)"].includes(this.title)) {
+          this.title = "H3-Media-Board V3";
+        }
         // Defer one frame: LiteGraph applies positional widget values during
         // configure, and the deferred pass guarantees the DOM card grid sees
         // the final restored values instead of its initial empty defaults.

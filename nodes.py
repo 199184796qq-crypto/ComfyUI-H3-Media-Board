@@ -1380,7 +1380,7 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "H3AudioOutputSwitch": "H3 原音频 / 生成音频自动切换",
     "H3LatentImageSwitch": "H3 Latent / 图像互斥切换",
-    "H3MediaBoard": "H3 Media Board (9 Image / 3 Audio / 3 Video)",
+    "H3MediaBoard": "H3-Media-Board V3",
     "H3MediaBoardVariableGet": "获取 H3mb 内置变量",
     "H3MediaBoardUnpack": "H3 Media Board Outputs",
     "H3ConditionLatentSwitch": "H3 条件与 Latent 切换",
