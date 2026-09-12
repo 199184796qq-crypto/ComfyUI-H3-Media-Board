@@ -25,9 +25,9 @@ const H3MB_VARIABLE_SPECS = Object.freeze({
   H3mb_sampler: { type: "SAMPLER", slot: 6 },
   "存储Clip_本段": { type: "INT", slot: 7 },
   "加载Clip_上段": { type: "INT", slot: 8 },
-  H3mb_重叠帧数: { type: "INT", slot: 9 },
+  H3mb_重叠帧数: { type: "COMBO", slot: 9 },
   H3mb_裁剪帧数: { type: "INT", slot: 10 },
-  H3_ConLength: { type: "INT", slot: 9 },
+  H3_ConLength: { type: "COMBO", slot: 9 },
   H3_tremFames: { type: "INT", slot: 10 },
 });
 const H3MB_SOURCE_NODE_PROPERTY = "h3mb_source_node_id";
@@ -262,6 +262,7 @@ function h3mbGraphLink(graph, linkId) {
 
 function h3mbTypesCompatible(sourceType, targetType) {
   if (!targetType || targetType === "*" || sourceType === "*") return true;
+  if (Array.isArray(targetType)) return sourceType === "COMBO";
   return String(targetType).split(",").map((item) => item.trim()).includes(sourceType);
 }
 

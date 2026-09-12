@@ -653,6 +653,8 @@ class H3MediaBoardVariableGet:
             raise ValueError(f"未知的 H3mb 内置变量: {variable}")
         if _h3mb_value is None:
             raise RuntimeError("没有找到可用的 H3 Media Board；请在同一工作流中添加并启用主节点。")
+        if variable in ("H3mb_重叠帧数", "H3_ConLength"):
+            return (str(int(_h3mb_value)),)
         return (_h3mb_value,)
 
 
