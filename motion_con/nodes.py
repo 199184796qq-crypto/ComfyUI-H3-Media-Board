@@ -327,5 +327,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "motion_con_load": "motion_con 读取",
     "motion_con_trim": "motion_con 裁掉重叠",
     "motion_con_dynamic": "motion_con 动态包装",
-    "motion_con_t8_wrapper": "motion_con T8 动态包装",
+    "motion_con_t8_wrapper": "MotionContextPro",
 }
