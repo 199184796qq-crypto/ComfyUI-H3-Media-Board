@@ -5,6 +5,7 @@ from pathlib import Path
 
 import folder_paths
 import torch
+import comfy.utils
 from safetensors.torch import load_file, save_file
 from comfy.nested_tensor import NestedTensor
 from .t8_loader import load_t8_sampling
@@ -33,7 +34,7 @@ def _apply_linear_temporal_noise_mask(target_latent, source_latent, guide_frames
     target_video, target_audio = _h3_streams(target_latent, "latent")
     source_video, source_audio = _h3_streams(source_latent, "previous_latent")
     frames = _valid_guide_frames(guide_frames)
-    tokens = 2 if frames <= 5 else ((frames - 5) // 17) * 5 + 2
+    tokens = 1 if frames == 1 else ((frames - 5) // 17) * 5 + 2
     if tokens >= target_video.shape[2] or tokens > source_video.shape[2]:
         raise ValueError("重叠长度超过 latent 可用范围。")
     video = target_video.clone(); video[:, :, :tokens] = source_video[:, :, -tokens:].to(video)
@@ -251,15 +252,41 @@ class MotionConT8Wrapper:
             "sampler_name": (["dual_clock_euler", "euler", "euler_cfg_pp", "euler_ancestral", "euler_ancestral_cfg_pp", "heun", "heunpp2", "exp_heun_2_x0", "exp_heun_2_x0_sde", "dpm_2", "dpm_2_ancestral", "lms", "dpm_fast", "dpm_adaptive", "dpmpp_2s_ancestral", "dpmpp_2s_ancestral_cfg_pp", "dpmpp_sde", "dpmpp_sde_gpu", "dpmpp_2m", "dpmpp_2m_cfg_pp", "dpmpp_2m_sde", "dpmpp_2m_sde_gpu", "dpmpp_2m_sde_heun", "dpmpp_2m_sde_heun_gpu", "dpmpp_3m_sde", "dpmpp_3m_sde_gpu", "ddpm", "lcm", "ipndm", "ipndm_v", "deis", "cfgpp_ud10_ab", "res_multistep", "res_multistep_cfg_pp", "res_multistep_ancestral", "res_multistep_ancestral_cfg_pp", "gradient_estimation", "gradient_estimation_cfg_pp", "er_sde", "seeds_2", "seeds_3", "sa_solver", "sa_solver_pece"], {"default": "dual_clock_euler"}),
             "scheduler": (["native_flow", "normal", "karras", "exponential", "sgm_uniform"], {"default": "native_flow"}),
             "context_length": (["22", "5", "39", "56"], {"default": "22"})},
-            "optional": {"previous_latent": ("LATENT",)}}
+            "optional": {
+                "previous_latent": ("LATENT",),
+                "context_frames": ("IMAGE", {"tooltip": "接 Load Video 的图像输出，使用末尾 context_length 帧续接。"}),
+                "vae": ("VAE", {"tooltip": "图像模式需要连接 H3 视频 VAE。"}),
+                "context_source": (["latent", "图像"], {"default": "latent", "tooltip": "续接来源；图像模式只续接画面，不固定音频。"}),
+            }}
             
     RETURN_TYPES = ("MODEL", "SAMPLER", "SIGMAS", "LATENT")
     RETURN_NAMES = ("model", "sampler", "sigmas", "av_latent")
     FUNCTION = "apply"
     CATEGORY = "H3-Media-Board"
-    DESCRIPTION = "T8 独立包装版：复制 T8 采样设置并加入动态遮罩，不修改 T8 原节点。"
+    DESCRIPTION = "T8 动态遮罩续接；context_source 切换 latent / 图像。图像模式将视频末尾帧用 H3 VAE 编码，只续接画面。"
 
-    def apply(self, model, av_latent, steps, shift_video, shift_audio, sampler_name, scheduler, context_length, previous_latent=None):
+    def apply(self, model, av_latent, steps, shift_video, shift_audio, sampler_name, scheduler, context_length, previous_latent=None, context_frames=None, vae=None, context_source="latent"):
+        guide_frames = _valid_guide_frames(int(context_length))
+        include_audio = context_source == "latent"
+        if context_source == "图像":
+            if context_frames is None or vae is None:
+                raise ValueError("图像续接模式需要连接 context_frames 和 H3 视频 vae。")
+            if context_frames.shape[0] == 0:
+                raise ValueError("context_frames 没有可用的视频帧。")
+            guide_frames = _valid_guide_frames(min(guide_frames, context_frames.shape[0]))
+            target_video, target_audio = _h3_streams(av_latent, "av_latent")
+            tail = context_frames[-guide_frames:, ..., :3]
+            tail = comfy.utils.common_upscale(
+                tail.movedim(-1, 1), target_video.shape[4] * 16,
+                target_video.shape[3] * 16, "lanczos", "disabled").movedim(1, -1)
+            encoded = vae.encode(tail)
+            expected_tokens = 1 if guide_frames == 1 else ((guide_frames - 5) // 17) * 5 + 2
+            if encoded.ndim != 5 or encoded.shape[2] != expected_tokens:
+                raise ValueError("视频帧编码结果不符合 H3 时间网格，请连接 H3 视频 VAE。")
+            previous_latent = {"samples": NestedTensor((encoded, target_audio))}
+            _LOG.info("[motion_con T8 动态包装] 图像续接：编码末尾 %d 帧；音频自由生成", guide_frames)
+        elif context_source != "latent":
+            raise ValueError("context_source 必须是 latent 或 图像。")
         module = load_t8_sampling()
         base_model, sampler, sigmas = module.setup_dual_clock_sampling(
             model, av_latent, steps, shift_video, shift_audio, sampler_name, scheduler)
@@ -271,8 +298,8 @@ class MotionConT8Wrapper:
             _LOG.info("[motion_con T8 动态包装] 未启用上下文续接：未提供上一段 latent；重叠 0 帧；未安装动态遮罩；本节 latent 原样输出")
             return base_model, sampler, sigmas, av_latent
         masked, details = _apply_linear_temporal_noise_mask(
-            av_latent, previous_latent, _valid_guide_frames(int(context_length)),
-            include_audio=True, gradient=False, audio_soft_release=True)
+            av_latent, previous_latent, guide_frames,
+            include_audio=include_audio, gradient=False, audio_soft_release=True)
         wrapped = install_drift_control_av_model(base_model, masked, sigmas, details["video_tokens"])
         _LOG.info(
             "[motion_con T8 动态包装] 续接准备完成：请求重叠 %s 帧 → 实际 %d 帧（%.6f 秒，24 fps）；复制上一段尾部 %d 个视频 latent 步；视频动态遮罩已安装",
