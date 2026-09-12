@@ -118,7 +118,7 @@ function setupRestartReconnect() {
   start(app.ui.settings.getSettingValue(RESTART_RECONNECT_SETTING, true));
 }
 
-function h3Settings(duration, aspectRatio, megapixels, multiple, secondPassScale = 1, autoCalculate = true, manualFrames = 362, secondPassSizeMode = "倍率放大", secondPassMegapixels = 1) {
+function h3Settings(duration, aspectRatio, megapixels, multiple, secondPassScale = 1, autoCalculate = true, manualFrames = 362, secondPassSizeMode = "百万原始", secondPassMegapixels = 1) {
   const seconds = Math.min(30, Math.max(4, Number(duration) || 15));
   const mp = Number(Math.min(16, Math.max(0.1, Number(megapixels) || 0.4)).toFixed(1));
   const align = Math.min(128, Math.max(8, Math.round(Number(multiple) || 32)));
@@ -142,22 +142,7 @@ function h3Settings(duration, aspectRatio, megapixels, multiple, secondPassScale
   return { duration: seconds, aspectRatio, megapixels: mp, multiple: align, secondPassScale: scaleFactor, secondPassSizeMode: directMode ? "百万原始" : "倍率放大", secondPassMegapixels: directMegapixels, secondPassWidth, secondPassHeight, autoCalculate: automatic, manualFrames: Math.max(1, Math.round(Number(manualFrames) || 1)), width, height, frames: automatic ? calculatedFrames : Math.max(1, Math.round(Number(manualFrames) || 1)) };
 }
 
-const H3_SECOND_PASS_SIZE_MODE_STORAGE_KEY = "h3_media_board.second_pass_size_mode";
 const H3_SECOND_PASS_SIZE_MODES = new Set(["倍率放大", "百万原始"]);
-
-function readRememberedSecondPassSizeMode() {
-  try {
-    const value = localStorage.getItem(H3_SECOND_PASS_SIZE_MODE_STORAGE_KEY);
-    return H3_SECOND_PASS_SIZE_MODES.has(value) ? value : null;
-  } catch (_) {
-    return null;
-  }
-}
-
-function rememberSecondPassSizeMode(value) {
-  if (!H3_SECOND_PASS_SIZE_MODES.has(value)) return;
-  try { localStorage.setItem(H3_SECOND_PASS_SIZE_MODE_STORAGE_KEY, value); } catch (_) { /* storage unavailable */ }
-}
 
 function promptH3Overrides(prompt) {
   const text = String(prompt || "").replaceAll("：", ":");
@@ -1091,7 +1076,6 @@ function makeH3SettingsPanel(widgets, node, promptWidget) {
   secondPassModeInput.onchange = () => {
     const value = secondPassModeInput.value === "百万原始" ? "百万原始" : "倍率放大";
     widgets.second_pass_size_mode.value = value; widgets.second_pass_size_mode.callback?.(value);
-    rememberSecondPassSizeMode(value);
     node._h3SaveBackup?.(); node.graph?.setDirtyCanvas(true, true); refreshSecondPassControls();
     panel.querySelector(".mb-output-summary").textContent = summaryText();
   };
@@ -1776,10 +1760,7 @@ function createBoard(node) {
       if (persisted.settings?.[name] !== undefined) widget.value = persisted.settings[name];
     }
   } else {
-    // A fresh board follows the last choice made in this browser. Workflow
-    // snapshots still win, so reopening an existing workflow remains exact.
-    const rememberedMode = readRememberedSecondPassSizeMode();
-    if (rememberedMode) settingsWidgets.second_pass_size_mode.value = rememberedMode;
+    settingsWidgets.second_pass_size_mode.value = "百万原始";
   }
   // A short-lived schema put the second-pass scale in the middle of the
   // serialized widget list. Repair only impossible values it may have left in
@@ -1795,7 +1776,7 @@ function createBoard(node) {
     if (!Number.isFinite(frames) || frames < 1 || frames > 10000) settingsWidgets.manual_frames.value = 362;
     const scale = Number(settingsWidgets.second_pass_scale.value);
     if (!Number.isFinite(scale) || scale < 1 || scale > 4) settingsWidgets.second_pass_scale.value = 1.0;
-    if (settingsWidgets.second_pass_size_mode.value !== "百万原始") settingsWidgets.second_pass_size_mode.value = "倍率放大";
+    if (!H3_SECOND_PASS_SIZE_MODES.has(settingsWidgets.second_pass_size_mode.value)) settingsWidgets.second_pass_size_mode.value = "百万原始";
     const secondMegapixels = Number(settingsWidgets.second_pass_megapixels.value);
     if (!Number.isFinite(secondMegapixels) || secondMegapixels < 0.1 || secondMegapixels > 16) settingsWidgets.second_pass_megapixels.value = 1.0;
     if (typeof settingsWidgets.video_name.value !== "string" || !settingsWidgets.video_name.value.trim()) settingsWidgets.video_name.value = "video/ComfyUi_";
@@ -2214,7 +2195,7 @@ function createBoard(node) {
             video_name: "video/ComfyUi_", duration: 15, aspect_ratio: "9:16",
             megapixels: 0.4, multiple: 32, scheduler_steps: 8, high_sigmas: 5,
             sampler_name: "res_multistep", clip_number: 1, second_pass_scale: 1,
-            second_pass_size_mode: "倍率放大", second_pass_megapixels: 1,
+            second_pass_size_mode: "百万原始", second_pass_megapixels: 1,
             auto_calculate: true, manual_frames: 362, noise_seed: 0,
             noise_mode: "fixed", noise_after_generate: "randomize",
           },
@@ -2726,7 +2707,7 @@ function decorateUnpacker(node) {
       valueOf("duration", 15), valueOf("aspect_ratio", "9:16"),
       valueOf("megapixels", 0.4), valueOf("multiple", 32),
       valueOf("second_pass_scale", 1), valueOf("auto_calculate", true),
-      valueOf("manual_frames", 362), valueOf("second_pass_size_mode", "倍率放大"),
+      valueOf("manual_frames", 362), valueOf("second_pass_size_mode", "百万原始"),
       valueOf("second_pass_megapixels", 1),
     );
     node._h3MediaCounts = {

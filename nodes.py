@@ -399,7 +399,7 @@ def _load_video_frames(item: dict[str, str] | None) -> torch.Tensor | None:
 
 def _h3_settings(duration: float, aspect_ratio: str, megapixels: float, multiple: int,
                  second_pass_scale: float = 1.0, auto_calculate: bool = True,
-                 manual_frames: int = 362, second_pass_size_mode: str = "倍率放大",
+                 manual_frames: int = 362, second_pass_size_mode: str = "百万原始",
                  second_pass_megapixels: float = 1.0) -> dict[str, int | float | str | bool]:
     """Match H3 Resolution Selector: MP × 1024² → ratio → nearest multiple."""
     duration = min(30.0, max(4.0, float(duration)))
@@ -499,7 +499,7 @@ class H3MediaBoard:
                 # workflow widget values by position, so inserting here would
                 # shift old seed and mode values into incompatible inputs.
                 "second_pass_scale": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 4.0, "step": 0.1}),
-                "second_pass_size_mode": (["倍率放大", "百万原始"], {"default": "倍率放大"}),
+                "second_pass_size_mode": (["倍率放大", "百万原始"], {"default": "百万原始"}),
                 "second_pass_megapixels": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 16.0, "step": 0.01}),
                 # Append new UI fields so older workflows keep their fixed
                 # widget positions.
@@ -530,7 +530,7 @@ class H3MediaBoard:
                 megapixels: float, multiple: int, auto_calculate: bool, manual_frames: int,
                 noise_seed: int, noise_mode: str, external_prompt: str | None = None,
                 unique_id: str | None = None, noise_after_generate: str = "randomize",
-                second_pass_scale: float = 1.0, second_pass_size_mode: str = "倍率放大",
+                second_pass_scale: float = 1.0, second_pass_size_mode: str = "百万原始",
                 second_pass_megapixels: float = 1.0, video_name: str = "video/ComfyUi_",
                 scheduler_steps: int = 8, high_sigmas: int = 5,
                 sampler_name: str = "res_multistep", clip_number: int = 1):
@@ -695,7 +695,7 @@ class H3MediaBoardUnpack:
             settings.get("duration", 15.0), settings.get("aspect_ratio", "9:16"),
             settings.get("megapixels", 0.4), settings.get("multiple", 32),
             settings.get("second_pass_scale", 1.0), settings.get("auto_calculate", True),
-            settings.get("manual_frames", 362), settings.get("second_pass_size_mode", "倍率放大"),
+            settings.get("manual_frames", 362), settings.get("second_pass_size_mode", "百万原始"),
             settings.get("second_pass_megapixels", 1.0),
         )
         if ref_image_size != "max":
