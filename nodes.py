@@ -46,8 +46,8 @@ H3MB_VARIABLE_NAMES = (
     "H3mb_sampler",
     "存储Clip_本段",
     "加载Clip_上段",
-    "H3mb_overlap_frames",
-    "H3mb_trim_frames",
+    "H3mb_重叠帧数",
+    "H3mb_裁剪帧数",
     "H3_ConLength",
     "H3_tremFames",
 )
@@ -523,7 +523,7 @@ class H3MediaBoard:
         }
 
     RETURN_TYPES = ("H3_MEDIA_BOARD", "NOISE", "FLOAT", "STRING", "INT", "INT", "SAMPLER", "INT", "INT", "INT", "INT")
-    RETURN_NAMES = ("media_board", "noise", "放大倍数", "视频名称", "调度器步数", "高频Sigmas", "K采样器", "存储Clip_本段", "加载Clip_上段", "H3mb_overlap_frames", "H3mb_trim_frames")
+    RETURN_NAMES = ("media_board", "noise", "放大倍数", "视频名称", "调度器步数", "高频Sigmas", "K采样器", "存储Clip_本段", "加载Clip_上段", "H3mb_重叠帧数", "H3mb_裁剪帧数")
     FUNCTION = "collect"
     CATEGORY = "H3-Media-Board"
 
@@ -575,7 +575,7 @@ class H3MediaBoard:
         overlap_frames = max(0, int(overlap_frames))
         trim_frames = overlap_frames if auto_trim else 0
         settings.update(auto_trim=bool(auto_trim), overlap_frames=overlap_frames,
-                        H3mb_overlap_frames=overlap_frames, H3mb_trim_frames=trim_frames,
+                        H3mb_重叠帧数=overlap_frames, H3mb_裁剪帧数=trim_frames,
                         H3_ConLength=overlap_frames, H3_tremFames=trim_frames)
         settings["存储Clip_本段"] = current_clip
         settings["加载Clip_上段"] = current_clip - 1
