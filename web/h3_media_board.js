@@ -1207,11 +1207,13 @@ function makeClipPanel(widgets, node) {
     node._h3SaveBackup?.();
     node.graph?.setDirtyCanvas(true, true);
   };
-  const trimLabel = document.createElement("label"); trimLabel.textContent = "是否自动裁剪";
-  const trimInput = document.createElement("select");
-  trimInput.append(new Option("是", "true"), new Option("否", "false"));
-  trimInput.value = String(widgets.auto_trim.value ?? true);
-  trimInput.style.cssText = "height:29px;background:#14121d;color:#f3efff;border:1px solid #675b86;border-radius:5px";
+  const trimLabel = document.createElement("label"); trimLabel.textContent = "自动裁剪";
+  const trimInput = document.createElement("input");
+  trimInput.type = "checkbox";
+  trimInput.checked = widgets.auto_trim.value ?? true;
+  trimInput.style.cssText = "width:16px;height:16px;flex:0 0 16px;margin:0;accent-color:#b491ff";
+  trimLabel.style.cssText = "display:flex;align-items:center;gap:8px";
+  trimLabel.appendChild(trimInput);
   const overlapLabel = document.createElement("label"); overlapLabel.textContent = "重叠帧数";
   const overlapInput = document.createElement("input");
   overlapInput.type = "number"; overlapInput.min = "0"; overlapInput.max = "10000"; overlapInput.step = "1";
@@ -1220,7 +1222,7 @@ function makeClipPanel(widgets, node) {
   for (const value of [22, 5, 39, 56]) presets.appendChild(new Option(String(value), String(value)));
   overlapInput.setAttribute("list", presets.id);
   trimInput.onchange = () => {
-    widgets.auto_trim.value = trimInput.value === "true";
+    widgets.auto_trim.value = trimInput.checked;
     widgets.auto_trim.callback?.(widgets.auto_trim.value);
     node._h3SaveBackup?.(); node.graph?.setDirtyCanvas(true, true);
   };
@@ -1232,7 +1234,7 @@ function makeClipPanel(widgets, node) {
     node._h3SaveBackup?.(); node.graph?.setDirtyCanvas(true, true);
   };
   field.style.flexWrap = "wrap";
-  field.append(label, input, suffix, trimLabel, trimInput, overlapLabel, overlapInput, presets);
+  field.append(label, input, suffix, trimLabel, overlapLabel, overlapInput, presets);
   panel.append(field, status); paint();
   return panel;
 }
