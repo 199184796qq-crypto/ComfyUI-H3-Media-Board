@@ -174,8 +174,10 @@ class MotionConTrim:
     def INPUT_TYPES(cls):
         return {"required": {
             "images": ("IMAGE",),
+        }, "optional": {
+            "audio": ("AUDIO",),
             "trim_frames": ("INT", {"default": 0, "min": 0, "forceInput": True}),
-        }, "optional": {"audio": ("AUDIO",)}}
+        }}
 
     RETURN_TYPES = ("IMAGE", "AUDIO")
     RETURN_NAMES = ("images", "audio")
@@ -183,7 +185,9 @@ class MotionConTrim:
     CATEGORY = "motion_con"
     DESCRIPTION = "H3 按 24 fps 裁掉本节开头重复的画面和音频；保存 latent 时仍保存完整采样结果。"
 
-    def trim(self, images, trim_frames, audio=None):
+    def trim(self, images, trim_frames=None, audio=None):
+        if trim_frames is None:
+            raise ValueError("请连接 trim_frames，指定需要裁掉的重叠帧数。")
         count = int(trim_frames)
         if count < 0 or count >= images.shape[0]:
             raise ValueError("裁切帧数必须小于本节总帧数。")
