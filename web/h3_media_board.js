@@ -1193,6 +1193,10 @@ function normalizeOverlapFrames(value) {
 
 function makeClipPanel(widgets, node) {
   const panel = document.createElement("div"); panel.className = "mb-noise mb-clip-panel";
+  const header = document.createElement("div"); header.className = "mb-noise-head";
+  const title = document.createElement("span"); title.className = "mb-noise-title";
+  title.textContent = "潜空间上下文连续";
+  header.appendChild(title); panel.appendChild(header);
   const field = document.createElement("div"); field.className = "mb-noise-field mb-clip-field";
   const label = document.createElement("label"); label.textContent = "上下文潜空间第";
   const suffix = document.createElement("span"); suffix.className = "mb-clip-suffix"; suffix.textContent = "段";
