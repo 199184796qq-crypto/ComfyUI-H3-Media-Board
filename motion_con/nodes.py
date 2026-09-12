@@ -45,7 +45,7 @@ def _apply_linear_temporal_noise_mask(target_latent, source_latent, guide_frames
         at = min(round(frames * 40 / 24), source_audio.shape[-1], target_audio.shape[-1])
         audio[..., :at] = source_audio[..., -at:].to(audio); am[..., :at] = 0
     out = dict(target_latent); out["samples"] = NestedTensor((video, audio)); out["noise_mask"] = NestedTensor((vm, am))
-    return out, {"frames": frames, "video_tokens": tokens}
+    return out, {"frames": frames, "video_tokens": tokens, "audio_tokens": at}
 
 
 def _path(value):
@@ -263,12 +263,27 @@ class MotionConT8Wrapper:
         module = load_t8_sampling()
         base_model, sampler, sigmas = module.setup_dual_clock_sampling(
             model, av_latent, steps, shift_video, shift_audio, sampler_name, scheduler)
+        _LOG.info(
+            "[motion_con T8 动态包装] 采样设置完成：sampler=%s；scheduler=%s；steps=%s；shift_video=%s；shift_audio=%s；生成 Sigmas 数量=%d",
+            sampler_name, scheduler, steps, shift_video, shift_audio, len(sigmas),
+        )
         if previous_latent is None:
+            _LOG.info("[motion_con T8 动态包装] 未启用上下文续接：未提供上一段 latent；重叠 0 帧；未安装动态遮罩；本节 latent 原样输出")
             return base_model, sampler, sigmas, av_latent
         masked, details = _apply_linear_temporal_noise_mask(
             av_latent, previous_latent, _valid_guide_frames(int(context_length)),
             include_audio=True, gradient=False, audio_soft_release=True)
-        return install_drift_control_av_model(base_model, masked, sigmas, details["video_tokens"]), sampler, sigmas, masked
+        wrapped = install_drift_control_av_model(base_model, masked, sigmas, details["video_tokens"])
+        _LOG.info(
+            "[motion_con T8 动态包装] 续接准备完成：请求重叠 %s 帧 → 实际 %d 帧（%.6f 秒，24 fps）；复制上一段尾部 %d 个视频 latent 步；视频动态遮罩已安装",
+            context_length, details["frames"], details["frames"] / 24, details["video_tokens"],
+        )
+        _LOG.info(
+            "[motion_con T8 动态包装] 音频：复制尾部 %d 个 latent 步（%.6f 秒，40 Hz）；重叠区固定保护",
+            details["audio_tokens"], details["audio_tokens"] / 40,
+        )
+        _LOG.info("[motion_con T8 动态包装] 本节点不裁切；请将 av_latent 输出接入采样器 Latent，解码后按实际重叠帧数裁切")
+        return wrapped, sampler, sigmas, masked
 
 
 NODE_CLASS_MAPPINGS = {
