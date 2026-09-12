@@ -1,3 +1,4 @@
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -8,6 +9,8 @@ from safetensors.torch import load_file, save_file
 from comfy.nested_tensor import NestedTensor
 from .t8_loader import load_t8_sampling
 from .drift_control_av import install_drift_control_av_model
+
+_LOG = logging.getLogger(__name__)
 
 def _h3_streams(latent, label):
     samples = latent.get("samples") if isinstance(latent, dict) else None
@@ -192,12 +195,29 @@ class MotionConTrim:
         if count < 0 or count >= images.shape[0]:
             raise ValueError("裁切帧数必须小于本节总帧数。")
         result_audio = audio
+        samples = 0
         if audio is not None and count:
             samples = round(count * int(audio["sample_rate"]) / 24)
             if samples >= audio["waveform"].shape[-1]:
                 raise ValueError("音频长度不足以裁掉重叠部分。")
             result_audio = dict(audio, waveform=audio["waveform"][..., samples:].clone())
-        return images[count:].clone() if count else images, result_audio
+        result_images = images[count:].clone() if count else images
+        _LOG.info(
+            "[motion_con 裁掉重叠] %s；头部裁掉 %d 帧（%.6f 秒，24 fps）；视频 %d → %d 帧",
+            "已裁切" if count else "未裁切", count, count / 24,
+            images.shape[0], result_images.shape[0],
+        )
+        if audio is None:
+            _LOG.info("[motion_con 裁掉重叠] 未接入音频")
+        elif samples:
+            _LOG.info(
+                "[motion_con 裁掉重叠] 音频头部裁掉 %d 个采样点（%.6f 秒）；采样点 %d → %d",
+                samples, samples / int(audio["sample_rate"]),
+                audio["waveform"].shape[-1], result_audio["waveform"].shape[-1],
+            )
+        else:
+            _LOG.info("[motion_con 裁掉重叠] 音频未裁切（0 个采样点）")
+        return result_images, result_audio
 
 
 class MotionConDynamic:
