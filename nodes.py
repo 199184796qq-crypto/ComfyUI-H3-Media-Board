@@ -513,7 +513,7 @@ class H3MediaBoard:
                 "sampler_name": (comfy.samplers.SAMPLER_NAMES, {"default": "res_multistep"}),
                 "clip_number": ("INT", {"default": 1, "min": 1, "max": 9999, "step": 1}),
                 "auto_trim": ("BOOLEAN", {"default": False}),
-                "overlap_frames": ("INT", {"default": 22, "min": 0, "max": 10000, "step": 1}),
+                "overlap_frames": ("INT", {"default": 22, "min": 5, "max": 56, "step": 17}),
             },
             # A separate forced input guarantees a visible socket in both the
             # legacy canvas and Nodes 2.0.  The local textarea remains usable
@@ -572,7 +572,7 @@ class H3MediaBoard:
         settings["sampler_name"] = resolved_sampler_name
         current_clip = max(1, min(9999, int(clip_number)))
         settings["clip_number"] = current_clip
-        overlap_frames = max(0, int(overlap_frames))
+        overlap_frames = 5 + 17 * max(0, min(3, math.floor((int(overlap_frames) - 5) / 17 + 0.5)))
         trim_frames = overlap_frames if auto_trim else 0
         settings.update(auto_trim=bool(auto_trim), overlap_frames=overlap_frames,
                         H3mb_重叠帧数=overlap_frames, H3mb_裁剪帧数=trim_frames,

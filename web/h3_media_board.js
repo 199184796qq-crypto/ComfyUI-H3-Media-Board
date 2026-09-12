@@ -1185,6 +1185,11 @@ function makeSchedulerPanel(widgets, node) {
   return panel;
 }
 
+function normalizeOverlapFrames(value) {
+  const frames = Number(value ?? 22);
+  return Number.isFinite(frames) ? 5 + 17 * Math.max(0, Math.min(3, Math.round((frames - 5) / 17))) : 22;
+}
+
 function makeClipPanel(widgets, node) {
   const panel = document.createElement("div"); panel.className = "mb-noise mb-clip-panel";
   const field = document.createElement("div"); field.className = "mb-noise-field mb-clip-field";
@@ -1217,12 +1222,10 @@ function makeClipPanel(widgets, node) {
   trimLabel.style.cssText = "display:flex;align-items:center;gap:8px";
   trimLabel.appendChild(trimInput);
   const overlapLabel = document.createElement("label"); overlapLabel.textContent = "重叠帧数";
-  const overlapInput = document.createElement("input");
-  overlapInput.type = "number"; overlapInput.min = "0"; overlapInput.max = "10000"; overlapInput.step = "1";
-  overlapInput.value = String(widgets.overlap_frames.value ?? 22);
-  const presets = document.createElement("datalist"); presets.id = `h3-overlap-${node.id}`;
-  for (const value of [5, 22, 39, 56]) presets.appendChild(new Option(String(value), String(value)));
-  overlapInput.setAttribute("list", presets.id);
+  const overlapInput = document.createElement("select");
+  for (const value of [5, 22, 39, 56]) overlapInput.appendChild(new Option(String(value), String(value)));
+  widgets.overlap_frames.value = normalizeOverlapFrames(widgets.overlap_frames.value);
+  overlapInput.value = String(widgets.overlap_frames.value);
   trimInput.onchange = () => {
     widgets.auto_trim.value = trimInput.checked;
     widgets.auto_trim.callback?.(widgets.auto_trim.value);
@@ -1230,13 +1233,13 @@ function makeClipPanel(widgets, node) {
   };
   overlapInput.onchange = () => {
     const value = Number(overlapInput.value);
-    widgets.overlap_frames.value = Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 22;
+    widgets.overlap_frames.value = Number.isFinite(value) ? normalizeOverlapFrames(value) : 22;
     overlapInput.value = String(widgets.overlap_frames.value);
     widgets.overlap_frames.callback?.(widgets.overlap_frames.value);
     node._h3SaveBackup?.(); node.graph?.setDirtyCanvas(true, true);
   };
   field.style.flexWrap = "wrap";
-  field.append(label, input, suffix, trimLabel, overlapLabel, overlapInput, presets);
+  field.append(label, input, suffix, trimLabel, overlapLabel, overlapInput);
   panel.append(field, status); paint();
   return panel;
 }
@@ -4232,7 +4235,7 @@ app.registerExtension({
         || "倍率放大";
       const named = graphNode.widgets_values_named;
       const autoTrim = named?.auto_trim ?? legacyTail[8] ?? false;
-      const overlapFrames = Math.max(0, Math.trunc(Number(named?.overlap_frames ?? legacyTail[9] ?? 22)));
+      const overlapFrames = normalizeOverlapFrames(named?.overlap_frames ?? legacyTail[9] ?? 22);
       const clipNumber = Math.max(1, Math.min(9999, Math.trunc(Number(named?.clip_number ?? legacyTail[7]) || 1)));
       const samplerName = typeof named?.sampler_name === "string" && named.sampler_name.trim()
         ? named.sampler_name
