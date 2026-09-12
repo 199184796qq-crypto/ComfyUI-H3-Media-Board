@@ -25,6 +25,8 @@ const H3MB_VARIABLE_SPECS = Object.freeze({
   H3mb_sampler: { type: "SAMPLER", slot: 6 },
   "存储Clip_本段": { type: "INT", slot: 7 },
   "加载Clip_上段": { type: "INT", slot: 8 },
+  H3_ConLength: { type: "INT", slot: 9 },
+  H3_tremFames: { type: "INT", slot: 10 },
 });
 const H3MB_SOURCE_NODE_PROPERTY = "h3mb_source_node_id";
 const H3MB_VALUE_INPUT = "_h3mb_value";
@@ -1205,7 +1207,33 @@ function makeClipPanel(widgets, node) {
     node._h3SaveBackup?.();
     node.graph?.setDirtyCanvas(true, true);
   };
-  field.append(label, input, suffix); panel.append(field, status); paint();
+  const trimLabel = document.createElement("label"); trimLabel.textContent = "是否自动裁剪";
+  const trimInput = document.createElement("select");
+  trimInput.append(new Option("是", "true"), new Option("否", "false"));
+  trimInput.value = String(widgets.auto_trim.value ?? true);
+  trimInput.style.cssText = "height:29px;background:#14121d;color:#f3efff;border:1px solid #675b86;border-radius:5px";
+  const overlapLabel = document.createElement("label"); overlapLabel.textContent = "重叠帧数";
+  const overlapInput = document.createElement("input");
+  overlapInput.type = "number"; overlapInput.min = "0"; overlapInput.max = "10000"; overlapInput.step = "1";
+  overlapInput.value = String(widgets.overlap_frames.value ?? 22);
+  const presets = document.createElement("datalist"); presets.id = `h3-overlap-${node.id}`;
+  for (const value of [22, 5, 39, 56]) presets.appendChild(new Option(String(value), String(value)));
+  overlapInput.setAttribute("list", presets.id);
+  trimInput.onchange = () => {
+    widgets.auto_trim.value = trimInput.value === "true";
+    widgets.auto_trim.callback?.(widgets.auto_trim.value);
+    node._h3SaveBackup?.(); node.graph?.setDirtyCanvas(true, true);
+  };
+  overlapInput.onchange = () => {
+    const value = Number(overlapInput.value);
+    widgets.overlap_frames.value = Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 22;
+    overlapInput.value = String(widgets.overlap_frames.value);
+    widgets.overlap_frames.callback?.(widgets.overlap_frames.value);
+    node._h3SaveBackup?.(); node.graph?.setDirtyCanvas(true, true);
+  };
+  field.style.flexWrap = "wrap";
+  field.append(label, input, suffix, trimLabel, trimInput, overlapLabel, overlapInput, presets);
+  panel.append(field, status); paint();
   return panel;
 }
 
@@ -1718,7 +1746,7 @@ function createBoard(node) {
   }
   const manifestWidget = node.widgets?.find((widget) => widget.name === "media_manifest");
   const promptWidget = node.widgets?.find((widget) => widget.name === "prompt");
-  const settingsWidgets = Object.fromEntries(["clip_number", "video_name", "duration", "aspect_ratio", "megapixels", "multiple", "scheduler_steps", "high_sigmas", "sampler_name", "second_pass_scale", "second_pass_size_mode", "second_pass_megapixels", "auto_calculate", "manual_frames", "noise_seed", "noise_mode", "noise_after_generate"].map((name) => [name, node.widgets?.find((widget) => widget.name === name)]));
+  const settingsWidgets = Object.fromEntries(["auto_trim", "overlap_frames", "clip_number", "video_name", "duration", "aspect_ratio", "megapixels", "multiple", "scheduler_steps", "high_sigmas", "sampler_name", "second_pass_scale", "second_pass_size_mode", "second_pass_megapixels", "auto_calculate", "manual_frames", "noise_seed", "noise_mode", "noise_after_generate"].map((name) => [name, node.widgets?.find((widget) => widget.name === name)]));
   const retryWhenWidgetsReady = () => {
     const attempts = node._h3BoardInitAttempts || 0;
     if (attempts >= 8 || node._h3BoardInitScheduled) return;
@@ -2194,7 +2222,7 @@ function createBoard(node) {
           settings: {
             video_name: "video/ComfyUi_", duration: 15, aspect_ratio: "9:16",
             megapixels: 0.4, multiple: 32, scheduler_steps: 8, high_sigmas: 5,
-            sampler_name: "res_multistep", clip_number: 1, second_pass_scale: 1,
+            sampler_name: "res_multistep", clip_number: 1, auto_trim: true, overlap_frames: 22, second_pass_scale: 1,
             second_pass_size_mode: "百万原始", second_pass_megapixels: 1,
             auto_calculate: true, manual_frames: 362, noise_seed: 0,
             noise_mode: "fixed", noise_after_generate: "randomize",
@@ -4199,6 +4227,8 @@ app.registerExtension({
         || legacyTail.slice().reverse().find((value) => H3_SECOND_PASS_SIZE_MODES.has(value))
         || "倍率放大";
       const named = graphNode.widgets_values_named;
+      const autoTrim = named?.auto_trim ?? legacyTail[8] ?? true;
+      const overlapFrames = Math.max(0, Math.trunc(Number(named?.overlap_frames ?? legacyTail[9] ?? 22)));
       const clipNumber = Math.max(1, Math.min(9999, Math.trunc(Number(named?.clip_number ?? legacyTail[7]) || 1)));
       const samplerName = typeof named?.sampler_name === "string" && named.sampler_name.trim()
         ? named.sampler_name
@@ -4229,7 +4259,7 @@ app.registerExtension({
 
       // Replace instead of inserting: this also repairs workflows already
       // saved with the former shifted strings in the numeric positions.
-      values.splice(12, values.length - 12, scale, mode, megapixels, videoName, schedulerSteps, highSigmas, samplerName, clipNumber);
+      values.splice(12, values.length - 12, scale, mode, megapixels, videoName, schedulerSteps, highSigmas, samplerName, clipNumber, autoTrim, overlapFrames);
 
       // Recent ComfyUI versions also persist a named copy.  Correcting only
       // widgets_values is not enough: the named values otherwise keep sending
@@ -4243,6 +4273,8 @@ app.registerExtension({
         graphNode.widgets_values_named.high_sigmas = highSigmas;
         graphNode.widgets_values_named.sampler_name = samplerName;
         graphNode.widgets_values_named.clip_number = clipNumber;
+        graphNode.widgets_values_named.auto_trim = autoTrim;
+        graphNode.widgets_values_named.overlap_frames = overlapFrames;
       }
     }
   },

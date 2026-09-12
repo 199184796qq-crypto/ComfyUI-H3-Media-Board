@@ -46,6 +46,8 @@ H3MB_VARIABLE_NAMES = (
     "H3mb_sampler",
     "存储Clip_本段",
     "加载Clip_上段",
+    "H3_ConLength",
+    "H3_tremFames",
 )
 
 
@@ -508,6 +510,8 @@ class H3MediaBoard:
                 "high_sigmas": ("INT", {"default": 5, "min": 0, "max": 100, "step": 1}),
                 "sampler_name": (comfy.samplers.SAMPLER_NAMES, {"default": "res_multistep"}),
                 "clip_number": ("INT", {"default": 1, "min": 1, "max": 9999, "step": 1}),
+                "auto_trim": ("BOOLEAN", {"default": True}),
+                "overlap_frames": ("INT", {"default": 22, "min": 0, "max": 10000, "step": 1}),
             },
             # A separate forced input guarantees a visible socket in both the
             # legacy canvas and Nodes 2.0.  The local textarea remains usable
@@ -516,8 +520,8 @@ class H3MediaBoard:
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
-    RETURN_TYPES = ("H3_MEDIA_BOARD", "NOISE", "FLOAT", "STRING", "INT", "INT", "SAMPLER", "INT", "INT")
-    RETURN_NAMES = ("media_board", "noise", "放大倍数", "视频名称", "调度器步数", "高频Sigmas", "K采样器", "存储Clip_本段", "加载Clip_上段")
+    RETURN_TYPES = ("H3_MEDIA_BOARD", "NOISE", "FLOAT", "STRING", "INT", "INT", "SAMPLER", "INT", "INT", "INT", "INT")
+    RETURN_NAMES = ("media_board", "noise", "放大倍数", "视频名称", "调度器步数", "高频Sigmas", "K采样器", "存储Clip_本段", "加载Clip_上段", "H3_ConLength", "H3_tremFames")
     FUNCTION = "collect"
     CATEGORY = "H3-Media-Board"
 
@@ -533,7 +537,8 @@ class H3MediaBoard:
                 second_pass_scale: float = 1.0, second_pass_size_mode: str = "百万原始",
                 second_pass_megapixels: float = 1.0, video_name: str = "video/ComfyUi_",
                 scheduler_steps: int = 8, high_sigmas: int = 5,
-                sampler_name: str = "res_multistep", clip_number: int = 1):
+                sampler_name: str = "res_multistep", clip_number: int = 1,
+                auto_trim: bool = True, overlap_frames: int = 22):
         manifest = _clean_manifest(media_manifest)
         effective_prompt = external_prompt if external_prompt is not None else prompt
         manifest["prompt"] = effective_prompt
@@ -565,6 +570,10 @@ class H3MediaBoard:
         settings["sampler_name"] = resolved_sampler_name
         current_clip = max(1, min(9999, int(clip_number)))
         settings["clip_number"] = current_clip
+        overlap_frames = max(0, int(overlap_frames))
+        trim_frames = overlap_frames if auto_trim else 0
+        settings.update(auto_trim=bool(auto_trim), overlap_frames=overlap_frames,
+                        H3_ConLength=overlap_frames, H3_tremFames=trim_frames)
         settings["存储Clip_本段"] = current_clip
         settings["加载Clip_上段"] = current_clip - 1
         manifest["video_name"] = resolved_video_name
@@ -603,6 +612,7 @@ class H3MediaBoard:
             "result": (
                 runtime_manifest, noise, float(settings["second_pass_output_value"]), resolved_video_name,
                 resolved_scheduler_steps, resolved_high_sigmas, sampler, current_clip, current_clip - 1,
+                overlap_frames, trim_frames,
             ),
         }
 
