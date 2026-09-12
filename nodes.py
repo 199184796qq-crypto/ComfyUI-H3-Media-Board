@@ -46,6 +46,8 @@ H3MB_VARIABLE_NAMES = (
     "H3mb_sampler",
     "存储Clip_本段",
     "加载Clip_上段",
+    "H3mb_overlap_frames",
+    "H3mb_trim_frames",
     "H3_ConLength",
     "H3_tremFames",
 )
@@ -510,7 +512,7 @@ class H3MediaBoard:
                 "high_sigmas": ("INT", {"default": 5, "min": 0, "max": 100, "step": 1}),
                 "sampler_name": (comfy.samplers.SAMPLER_NAMES, {"default": "res_multistep"}),
                 "clip_number": ("INT", {"default": 1, "min": 1, "max": 9999, "step": 1}),
-                "auto_trim": ("BOOLEAN", {"default": True}),
+                "auto_trim": ("BOOLEAN", {"default": False}),
                 "overlap_frames": ("INT", {"default": 22, "min": 0, "max": 10000, "step": 1}),
             },
             # A separate forced input guarantees a visible socket in both the
@@ -521,7 +523,7 @@ class H3MediaBoard:
         }
 
     RETURN_TYPES = ("H3_MEDIA_BOARD", "NOISE", "FLOAT", "STRING", "INT", "INT", "SAMPLER", "INT", "INT", "INT", "INT")
-    RETURN_NAMES = ("media_board", "noise", "放大倍数", "视频名称", "调度器步数", "高频Sigmas", "K采样器", "存储Clip_本段", "加载Clip_上段", "H3_ConLength", "H3_tremFames")
+    RETURN_NAMES = ("media_board", "noise", "放大倍数", "视频名称", "调度器步数", "高频Sigmas", "K采样器", "存储Clip_本段", "加载Clip_上段", "H3mb_overlap_frames", "H3mb_trim_frames")
     FUNCTION = "collect"
     CATEGORY = "H3-Media-Board"
 
@@ -538,7 +540,7 @@ class H3MediaBoard:
                 second_pass_megapixels: float = 1.0, video_name: str = "video/ComfyUi_",
                 scheduler_steps: int = 8, high_sigmas: int = 5,
                 sampler_name: str = "res_multistep", clip_number: int = 1,
-                auto_trim: bool = True, overlap_frames: int = 22):
+                auto_trim: bool = False, overlap_frames: int = 22):
         manifest = _clean_manifest(media_manifest)
         effective_prompt = external_prompt if external_prompt is not None else prompt
         manifest["prompt"] = effective_prompt
@@ -573,6 +575,7 @@ class H3MediaBoard:
         overlap_frames = max(0, int(overlap_frames))
         trim_frames = overlap_frames if auto_trim else 0
         settings.update(auto_trim=bool(auto_trim), overlap_frames=overlap_frames,
+                        H3mb_overlap_frames=overlap_frames, H3mb_trim_frames=trim_frames,
                         H3_ConLength=overlap_frames, H3_tremFames=trim_frames)
         settings["存储Clip_本段"] = current_clip
         settings["加载Clip_上段"] = current_clip - 1

@@ -25,6 +25,8 @@ const H3MB_VARIABLE_SPECS = Object.freeze({
   H3mb_sampler: { type: "SAMPLER", slot: 6 },
   "存储Clip_本段": { type: "INT", slot: 7 },
   "加载Clip_上段": { type: "INT", slot: 8 },
+  H3mb_overlap_frames: { type: "INT", slot: 9 },
+  H3mb_trim_frames: { type: "INT", slot: 10 },
   H3_ConLength: { type: "INT", slot: 9 },
   H3_tremFames: { type: "INT", slot: 10 },
 });
@@ -1210,7 +1212,7 @@ function makeClipPanel(widgets, node) {
   const trimLabel = document.createElement("label"); trimLabel.textContent = "自动裁剪";
   const trimInput = document.createElement("input");
   trimInput.type = "checkbox";
-  trimInput.checked = widgets.auto_trim.value ?? true;
+  trimInput.checked = widgets.auto_trim.value ?? false;
   trimInput.style.cssText = "width:16px;height:16px;flex:0 0 16px;margin:0;accent-color:#b491ff";
   trimLabel.style.cssText = "display:flex;align-items:center;gap:8px";
   trimLabel.appendChild(trimInput);
@@ -1219,7 +1221,7 @@ function makeClipPanel(widgets, node) {
   overlapInput.type = "number"; overlapInput.min = "0"; overlapInput.max = "10000"; overlapInput.step = "1";
   overlapInput.value = String(widgets.overlap_frames.value ?? 22);
   const presets = document.createElement("datalist"); presets.id = `h3-overlap-${node.id}`;
-  for (const value of [22, 5, 39, 56]) presets.appendChild(new Option(String(value), String(value)));
+  for (const value of [5, 22, 39, 56]) presets.appendChild(new Option(String(value), String(value)));
   overlapInput.setAttribute("list", presets.id);
   trimInput.onchange = () => {
     widgets.auto_trim.value = trimInput.checked;
@@ -2224,7 +2226,7 @@ function createBoard(node) {
           settings: {
             video_name: "video/ComfyUi_", duration: 15, aspect_ratio: "9:16",
             megapixels: 0.4, multiple: 32, scheduler_steps: 8, high_sigmas: 5,
-            sampler_name: "res_multistep", clip_number: 1, auto_trim: true, overlap_frames: 22, second_pass_scale: 1,
+            sampler_name: "res_multistep", clip_number: 1, auto_trim: false, overlap_frames: 22, second_pass_scale: 1,
             second_pass_size_mode: "百万原始", second_pass_megapixels: 1,
             auto_calculate: true, manual_frames: 362, noise_seed: 0,
             noise_mode: "fixed", noise_after_generate: "randomize",
@@ -4229,7 +4231,7 @@ app.registerExtension({
         || legacyTail.slice().reverse().find((value) => H3_SECOND_PASS_SIZE_MODES.has(value))
         || "倍率放大";
       const named = graphNode.widgets_values_named;
-      const autoTrim = named?.auto_trim ?? legacyTail[8] ?? true;
+      const autoTrim = named?.auto_trim ?? legacyTail[8] ?? false;
       const overlapFrames = Math.max(0, Math.trunc(Number(named?.overlap_frames ?? legacyTail[9] ?? 22)));
       const clipNumber = Math.max(1, Math.min(9999, Math.trunc(Number(named?.clip_number ?? legacyTail[7]) || 1)));
       const samplerName = typeof named?.sampler_name === "string" && named.sampler_name.trim()
