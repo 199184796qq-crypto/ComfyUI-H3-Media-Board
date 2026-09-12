@@ -6,6 +6,8 @@ import folder_paths
 import torch
 from safetensors.torch import load_file, save_file
 from comfy.nested_tensor import NestedTensor
+from .t8_loader import load_t8_sampling
+from .drift_control_av import install_drift_control_av_model
 
 def _h3_streams(latent, label):
     samples = latent.get("samples") if isinstance(latent, dict) else None
@@ -212,11 +214,7 @@ class MotionConDynamic:
         masked, details = _apply_linear_temporal_noise_mask(
             latent, previous_latent, _valid_guide_frames(int(context_length)),
             include_audio=True, gradient=False, audio_soft_release=True)
-        path = Path(r"E:\AI\COMFYUIdapaoVIP\comfyui313\custom_nodes\ComfyUI-MiniMaxH3-TimelineDirector\drift_control_av.py")
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("motion_con_drift", path)
-        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-        wrapped = module.install_drift_control_av_model(model, masked, sigmas, details["video_tokens"])
+        wrapped = install_drift_control_av_model(model, masked, sigmas, details["video_tokens"])
         return wrapped, masked
 
 
@@ -238,10 +236,7 @@ class MotionConT8Wrapper:
     DESCRIPTION = "T8 独立包装版：复制 T8 采样设置并加入动态遮罩，不修改 T8 原节点。"
 
     def apply(self, model, av_latent, steps, shift_video, shift_audio, sampler_name, scheduler, context_length, previous_latent=None):
-        path = Path(r"E:\AI\COMFYUIdapaoVIP\comfyui313\custom_nodes\minimax-h3-audio-T8\nodes.py")
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("motion_con_t8", path)
-        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        module = load_t8_sampling()
         base_model, sampler, sigmas = module.setup_dual_clock_sampling(
             model, av_latent, steps, shift_video, shift_audio, sampler_name, scheduler)
         if previous_latent is None:
@@ -249,10 +244,7 @@ class MotionConT8Wrapper:
         masked, details = _apply_linear_temporal_noise_mask(
             av_latent, previous_latent, _valid_guide_frames(int(context_length)),
             include_audio=True, gradient=False, audio_soft_release=True)
-        drift = Path(r"E:\AI\COMFYUIdapaoVIP\comfyui313\custom_nodes\ComfyUI-MiniMaxH3-TimelineDirector\drift_control_av.py")
-        ds = importlib.util.spec_from_file_location("motion_con_drift2", drift)
-        dm = importlib.util.module_from_spec(ds); ds.loader.exec_module(dm)
-        return dm.install_drift_control_av_model(base_model, masked, sigmas, details["video_tokens"]), sampler, sigmas, masked
+        return install_drift_control_av_model(base_model, masked, sigmas, details["video_tokens"]), sampler, sigmas, masked
 
 
 NODE_CLASS_MAPPINGS = {
