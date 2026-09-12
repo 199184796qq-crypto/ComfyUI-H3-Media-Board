@@ -1306,7 +1306,7 @@ function makePromptEditor(promptWidget, node, getState, saveBackup, onPromptChan
   actions.className = "mb-prompt-actions";
   const help = document.createElement("span");
   help.className = "mb-prompt-help";
-  help.textContent = "提示词说明：@可以呼出素材，鼠标放在关键词能显示素材，中键点击音频或视频标签可播放/暂停，按住 Ctrl 可操作预览控件。提示词优先锁定视频比例";
+  help.textContent = "输入 @ 呼出素材。";
   const editor = document.createElement("div");
   editor.className = "mb-prompt-editor";
   editor.contentEditable = "true";
@@ -2207,8 +2207,8 @@ function createBoard(node) {
         select.className = "mb-audio-mode";
         select.setAttribute("aria-label", "音频模式");
         select.style.cssText = "height:26px;max-width:280px;background:#202528;color:#ddd;border:1px solid #50575d;border-radius:6px;padding:2px 8px;font-size:12px";
-        for (const [value, label] of [["native", "原生音频"], ["lock_source", "锁定源音频"], ["remix_source", "重混源音频"]]) {
-          select.appendChild(new Option(`${label} · ${value}`, value));
+        for (const [value, label] of [["native", "声音参考"], ["lock_source", "音频驱动"], ["remix_source", "混合音频"]]) {
+          select.appendChild(new Option(label, value));
         }
         select.onpointerdown = (event) => event.stopPropagation();
         select.onchange = (event) => {
@@ -2219,7 +2219,10 @@ function createBoard(node) {
           }
           node.graph?.setDirtyCanvas?.(true, true);
         };
-        title.appendChild(select);
+        const modeLabel = document.createElement("label");
+        modeLabel.style.cssText = "display:flex;align-items:center;gap:8px";
+        modeLabel.append("音频模式", select);
+        title.appendChild(modeLabel);
       }
       if (kind === "image") {
         title.classList.add("mb-media-heading");
