@@ -522,8 +522,8 @@ class H3MediaBoard:
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
-    RETURN_TYPES = ("H3_MEDIA_BOARD", "NOISE", "FLOAT", "STRING", "INT", "INT", "SAMPLER", "INT", "INT", "INT", "INT")
-    RETURN_NAMES = ("media_board", "noise", "放大倍数", "视频名称", "调度器步数", "高频Sigmas", "K采样器", "存储Clip_本段", "加载Clip_上段", "H3mb_重叠帧数", "H3mb_裁剪帧数")
+    RETURN_TYPES = ("H3_MEDIA_BOARD", "H3_MEDIA_BOARD_PARAMETERS")
+    RETURN_NAMES = ("media_board", "参数")
     FUNCTION = "collect"
     CATEGORY = "H3-Media-Board"
 
@@ -608,16 +608,28 @@ class H3MediaBoard:
             f"\n  K采样器: {resolved_sampler_name}",
             flush=True,
         )
-        # Keep all existing output indexes stable. The third output now returns
-        # the active size field exactly as entered: multiplier or megapixels.
         return {
             "ui": {"h3_media_board": [manifest]},
             "result": (
-                runtime_manifest, noise, float(settings["second_pass_output_value"]), resolved_video_name,
+                runtime_manifest, (noise, float(settings["second_pass_output_value"]), resolved_video_name,
                 resolved_scheduler_steps, resolved_high_sigmas, sampler, current_clip, current_clip - 1,
-                overlap_frames, trim_frames,
+                overlap_frames, trim_frames),
             ),
         }
+
+
+class H3MediaBoardParameters:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"参数": ("H3_MEDIA_BOARD_PARAMETERS",)}}
+
+    RETURN_TYPES = ("NOISE", "FLOAT", "STRING", "INT", "INT", "SAMPLER", "INT", "INT", "INT", "INT")
+    RETURN_NAMES = ("noise", "放大倍数", "视频名称", "调度器步数", "高频Sigmas", "K采样器", "存储Clip_本段", "加载Clip_上段", "H3mb_重叠帧数", "H3mb_裁剪帧数")
+    FUNCTION = "unpack"
+    CATEGORY = "H3-Media-Board"
+
+    def unpack(self, 参数):
+        return 参数
 
 
 class H3MediaBoardVariableGet:
@@ -653,6 +665,9 @@ class H3MediaBoardVariableGet:
             raise ValueError(f"未知的 H3mb 内置变量: {variable}")
         if _h3mb_value is None:
             raise RuntimeError("没有找到可用的 H3 Media Board；请在同一工作流中添加并启用主节点。")
+        if isinstance(_h3mb_value, tuple) and variable != "mediaBorad":
+            name = {"H3_ConLength": "H3mb_重叠帧数", "H3_tremFames": "H3mb_裁剪帧数"}.get(variable, variable)
+            _h3mb_value = _h3mb_value[H3MB_VARIABLE_NAMES.index(name) - 1]
         if variable in ("H3mb_重叠帧数", "H3_ConLength"):
             return (str(int(_h3mb_value)),)
         return (_h3mb_value,)
@@ -1380,6 +1395,7 @@ NODE_CLASS_MAPPINGS = {
     "H3AudioOutputSwitch": H3AudioOutputSwitch,
     "H3LatentImageSwitch": H3LatentImageSwitch,
     "H3MediaBoard": H3MediaBoard,
+    "H3MediaBoardParameters": H3MediaBoardParameters,
     "H3MediaBoardVariableGet": H3MediaBoardVariableGet,
     "H3MediaBoardUnpack": H3MediaBoardUnpack,
     "H3ConditionLatentSwitch": H3ConditionLatentSwitch,
@@ -1396,6 +1412,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3AudioOutputSwitch": "H3 原音频 / 生成音频自动切换",
     "H3LatentImageSwitch": "H3 Latent / 图像互斥切换",
     "H3MediaBoard": "H3-Media-Board V3",
+    "H3MediaBoardParameters": "H3 参数拆分",
     "H3MediaBoardVariableGet": "获取 H3mb 内置变量",
     "H3MediaBoardUnpack": "H3 Media Board Outputs",
     "H3ConditionLatentSwitch": "H3 条件与 Latent 切换",

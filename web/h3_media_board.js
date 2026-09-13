@@ -389,7 +389,7 @@ function installH3VariablePromptResolver() {
       }
       const spec = h3mbVariableSpec(getter);
       getterPrompt.inputs = getterPrompt.inputs || {};
-      getterPrompt.inputs[H3MB_VALUE_INPUT] = [String(source.id), spec.slot];
+      getterPrompt.inputs[H3MB_VALUE_INPUT] = [String(source.id), spec.sourceClass ? spec.slot : 1];
     }
     for (const entry of Object.values(prompt?.output || {})) {
       if (entry.class_type !== "MiniMaxH3MotionContextLoadLatent") continue;
@@ -397,7 +397,7 @@ function installH3VariablePromptResolver() {
       if (!Array.isArray(link)) continue;
       const source = prompt.output[String(link[0])];
       if ((source?.class_type === "H3MediaBoardVariableGet" && source.inputs?.variable === "加载Clip_上段")
-          || (source?.class_type === "H3MediaBoard" && Number(link[1]) === 8)) {
+          || (source?.class_type === "H3MediaBoardParameters" && Number(link[1]) === 7)) {
         entry.inputs.skip_zero = true;
       }
     }
@@ -1730,31 +1730,11 @@ function boardAudioModeTargets(board) {
 function createBoard(node) {
   if (node._h3BoardCreated) return;
   injectStyle();
-  // Workflows saved before the second-pass scale existed have only the first
-  // two ports. Append the new FLOAT port without changing either old index.
-  const legacyScaleOutput = node.outputs?.find((output) => output.name === "2采放大倍数");
-  if (legacyScaleOutput) {
-    legacyScaleOutput.name = "放大倍数";
-    legacyScaleOutput.label = "放大倍数";
-  }
-  if (!node.outputs?.some((output) => output.name === "放大倍数")) {
-    node.addOutput?.("放大倍数", "FLOAT");
+  // Replace legacy parameter sockets; media_board remains at slot zero.
+  if (node.outputs?.length !== 2 || node.outputs?.[1]?.type !== "H3_MEDIA_BOARD_PARAMETERS") {
+    while (node.outputs?.length > 1) node.removeOutput?.(node.outputs.length - 1);
+    node.addOutput?.("参数", "H3_MEDIA_BOARD_PARAMETERS");
     node.graph?.setDirtyCanvas?.(true, true);
-  }
-  if (!node.outputs?.some((output) => output.name === "调度器步数")) {
-    node.addOutput?.("调度器步数", "INT");
-    node.graph?.setDirtyCanvas?.(true, true);
-  }
-  if (!node.outputs?.some((output) => output.name === "高频Sigmas")) {
-    node.addOutput?.("高频Sigmas", "INT");
-    node.graph?.setDirtyCanvas?.(true, true);
-  }
-  if (!node.outputs?.some((output) => output.name === "K采样器")) {
-    node.addOutput?.("K采样器", "SAMPLER");
-    node.graph?.setDirtyCanvas?.(true, true);
-  }
-  for (const name of ["存储Clip_本段", "加载Clip_上段"]) {
-    if (!node.outputs?.some((output) => output.name === name)) node.addOutput?.(name, "INT");
   }
   const manifestWidget = node.widgets?.find((widget) => widget.name === "media_manifest");
   const promptWidget = node.widgets?.find((widget) => widget.name === "prompt");
